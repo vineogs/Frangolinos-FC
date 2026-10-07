@@ -1,0 +1,143 @@
+name: Deploy Hostinger
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hostinger-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    env:
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+      PUBLIC_PATH: /home/u120097227/domains/frangolinos.vineo.tech/public_html
+
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Configurar Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Compilar frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Configurar SSH
+        shell: bash
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Verificar diretórios no servidor
+        shell: bash
+        run: |
+          printf -v remote_command \
+            'test -d %q && test -f %q && test -f %q' \
+            "$DEPLOY_PATH" \
+            "$DEPLOY_PATH/.env" \
+            "$PUBLIC_PATH/index.php"
+
+          ssh -i ~/.ssh/deploy_key \
+            -p "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            "$SSH_USER@$SSH_HOST" \
+            "$remote_command"
+
+      - name: Enviar código da aplicação
+        shell: bash
+        run: |
+          rsync -az --protect-args \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='.env*' \
+            --exclude='.agents/' \
+            --exclude='.codex/' \
+            --exclude='node_modules/' \
+            --exclude='vendor/' \
+            --exclude='storage/' \
+            --exclude='bootstrap/cache/' \
+            --exclude='database/*.sqlite*' \
+            --exclude='public/hot' \
+            --exclude='public/storage' \
+            -e "ssh -i ~/.ssh/deploy_key -p $SSH_PORT -o BatchMode=yes -o StrictHostKeyChecking=yes" \
+            ./ "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/"
+
+      - name: Enviar arquivos públicos
+        shell: bash
+        run: |
+          rsync -az --protect-args \
+            --exclude='/index.php' \
+            --exclude='/hot' \
+            --exclude='/storage' \
+            --exclude='/.user.ini' \
+            -e "ssh -i ~/.ssh/deploy_key -p $SSH_PORT -o BatchMode=yes -o StrictHostKeyChecking=yes" \
+            public/ "$SSH_USER@$SSH_HOST:$PUBLIC_PATH/"
+
+      - name: Instalar dependências e atualizar Laravel
+        shell: bash
+        run: |
+          printf -v remote_command 'bash -s -- %q' "$DEPLOY_PATH"
+
+          ssh -i ~/.ssh/deploy_key \
+            -p "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            "$SSH_USER@$SSH_HOST" \
+            "$remote_command" <<'REMOTE'
+          set -euo pipefail
+
+          cd "$1"
+
+          PHP_BIN=/opt/alt/php84/usr/bin/php
+          COMPOSER_BIN=/usr/local/bin/composer2
+
+          mkdir -p \
+            storage/framework/cache/data \
+            storage/framework/sessions \
+            storage/framework/views \
+            storage/logs \
+            bootstrap/cache
+
+          "$PHP_BIN" "$COMPOSER_BIN" install \
+            --no-dev \
+            --prefer-dist \
+            --no-interaction \
+            --optimize-autoloader
+
+          "$PHP_BIN" artisan config:clear
+          "$PHP_BIN" artisan migrate --force
+          "$PHP_BIN" artisan optimize
+          REMOTE
+
+      - name: Verificar resposta do site
+        run: |
+          curl --fail --silent --show-error --location \
+            --retry 2 --retry-delay 5 --max-time 30 \
+            --output /dev/null \
+            https://frangolinos.vineo.tech
