@@ -49,7 +49,7 @@ async function harness({rejectSave = false, rejectPlayer = false, responses = {}
         closest() {return null;}
     }
     const element = (id) => {if (!elements.has(id)) elements.set(id,new Element(id)); return elements.get(id);};
-    const day = {id:'ef83f52e-9c39-4936-bd4b-fb360ea0b4f3',date:'2026-10-10',time:'19:00',location:'Quadra',attendees:players.map((player) => player.id)};
+    const day = {id:'ef83f52e-9c39-4936-bd4b-fb360ea0b4f3',date:'2026-10-10',time:'19:00',end_time:'21:00',location:'Quadra',attendees:players.map((player) => player.id)};
     let data = {players:cloneState(players), matches:[], current:null};
     const requests = [];
     const handlers = {};
@@ -447,6 +447,9 @@ test('profile notifications display the new schedule and opening one marks only 
     const app = await harness({responses:{'/profile':()=>({player:players[0]}),'/profile/notifications':()=>[item()],'/profile/notifications/notice-id/read':()=>{read=true;return item();}}});
     assert.match(app.element('profile-notifications').innerHTML,/● Novo dia de racha!/);
     assert.match(app.element('profile-notifications').innerHTML,/19:00 às 21:00/);
+    assert.match(app.element('profile-notifications').innerHTML,/3 vagas de linha · 1 vaga de goleiro/);
+    assert.match(app.element('profile-notifications').innerHTML,/Cancelar/);
+    assert.equal(app.element('profile-days').innerHTML, '');
     await app.element('profile-notifications').handlers.click({target:{closest:()=>({dataset:{openNotification:'notice-id'}})}});
     assert.equal(read,true);
     assert.doesNotMatch(app.element('profile-notifications').innerHTML,/● /);
@@ -454,14 +457,92 @@ test('profile notifications display the new schedule and opening one marks only 
 });
 
 
-test('declining hides that racha from my presence and other profiles still see it', async () => {
+test('canceling keeps the racha available to participate again', async () => {
     const dayId = 'ef83f52e-9c39-4936-bd4b-fb360ea0b4f3';
     const app = await harness({responses:{'/profile':()=>({player:players[3]}),[`/profile/days/${dayId}/attendance`]:()=>({id:dayId,date:'2026-10-10',time:'19:00',location:'Quadra',attendees:[],declined_players:[players[3].id]})}});
     assert.equal(app.element('profile-attendance-panel').hidden,false);
     await app.trigger({myAttendance:dayId,present:'false'});
-    assert.equal(app.element('profile-attendance-panel').hidden,true);
-    assert.doesNotMatch(app.element('profile-days').innerHTML,/data-my-attendance/);
+    assert.equal(app.element('profile-attendance-panel').hidden,false);
+    assert.match(app.element('profile-days').innerHTML,/Participar/);
+    assert.doesNotMatch(app.element('profile-days').innerHTML,/Não vou/);
     vm.runInContext(`profilePlayerId = ${JSON.stringify(players[4].id)}; render();`,app.context);
     assert.equal(app.element('profile-attendance-panel').hidden,false);
     assert.match(app.element('profile-days').innerHTML,/data-my-attendance/);
+});
+
+test('central totals stay in the active day while general statistics include historical matches and tied leaders', async () => {
+    const app = await harness();
+    vm.runInContext(`
+        const activeDayId = days[0].id;
+        const oldMatch = {id:'old',dayId:'previous-day',teams:{a:[state.players[0].id],b:[state.players[1].id]},goals:[{team:'a',player:state.players[0].id,assist:state.players[1].id}],elapsed:600,duration:10,date:'2026-10-01'};
+        state.matches = [oldMatch];
+        state.current = {...oldMatch,id:'active',dayId:activeDayId,participants:{a:[state.players[0].id,state.players[2].id],b:[state.players[1].id]},goals:[{team:'b',player:state.players[1].id,assist:state.players[2].id}]};
+        render();
+    `, app.context);
+    assert.equal(app.element('stat-matches').textContent, 0);
+    assert.equal(app.element('stat-goals').textContent, 1);
+    assert.equal(app.element('stat-leader').textContent, 'Jogador 2');
+    assert.match(app.element('general-statistics').innerHTML, /Gols marcados<\/span><strong>2/);
+    assert.match(app.element('general-statistics').innerHTML, /Jogador 1, Jogador 2/);
+    assert.match(app.element('statistics-games').innerHTML, /Jogador 3<\/span><strong>1/);
+    assert.match(app.element('statistics-assists').innerHTML, /Jogador 2/);
+    await app.trigger({tab:'statistics'});
+    assert.equal(app.element('page-title').textContent, 'Estatísticas');
+    vm.runInContext('selectedDayId = null; state.current = null; render();', app.context);
+    assert.equal(app.element('stat-goals').textContent, 0);
+    assert.equal(app.element('stat-leader').textContent, '—');
+});
+
+test('day attendance offers the connected profile its own play action and keeps other registered players separate', async () => {
+    const dayId = 'ef83f52e-9c39-4936-bd4b-fb360ea0b4f3';
+    const app = await harness({responses:{'/profile':()=>({player:players[3]}),[`/profile/days/${dayId}/attendance`]:input=>({id:dayId,date:'2026-10-10',time:'19:00',location:'Quadra',attendees:input.present ? [players[3].id] : []})}});
+    assert.equal(app.element('day-profile-attendance').hidden, false);
+    assert.equal(app.element('play-day').textContent, '✓ Você vai jogar');
+    assert.equal(app.element('play-day').disabled, true);
+    assert.doesNotMatch(app.element('attendance-player').innerHTML, new RegExp(players[3].id));
+    assert.doesNotMatch(app.element('attendance-player').innerHTML, new RegExp(players[4].id));
+    vm.runInContext('days[0].attendees = days[0].attendees.filter(id => id !== state.players[4].id); render();', app.context);
+    assert.match(app.element('attendance-player').innerHTML, new RegExp(players[4].id));
+    await app.click('skip-day');
+    assert.equal(app.element('play-day').textContent, 'Jogar');
+    assert.equal(app.element('play-day').disabled, false);
+    await app.click('play-day');
+    const writes = app.requests.filter(request=>request.url===`/profile/days/${dayId}/attendance`);
+    assert.deepEqual(writes.map(request=>JSON.parse(request.options.body)), [{present:false},{present:true}]);
+    vm.runInContext('days[0].finished_at = "2026-10-10T21:00:00"; render();', app.context);
+    assert.equal(app.element('day-profile-attendance').hidden, true);
+    assert.equal(app.element('play-day').disabled, true);
+});
+
+test('day attendance without a connected profile allows selecting any registered player', async () => {
+    const app = await harness();
+    assert.equal(app.element('day-profile-attendance').hidden, true);
+    assert.equal(app.element('attendance-player-label').textContent, 'Adicionar jogador cadastrado');
+    assert.doesNotMatch(app.element('attendance-player').innerHTML, new RegExp(players[3].id));
+    vm.runInContext('days[0].attendees = []; render();', app.context);
+    assert.match(app.element('attendance-player').innerHTML, new RegExp(players[3].id));
+});
+
+test('temporary goalkeeper switches the team role without changing registered player positions', async () => {
+    const app = await harness();
+    await app.click('new-match');
+    await app.submit('setup-form');
+    const roles = vm.runInContext('({team:"a", old:state.current.goalkeepers.a, next:state.current.teams.a.find(id => id !== state.current.goalkeepers.a), positions:JSON.stringify(state.players)})', app.context);
+    await app.trigger({temporaryKeeper:roles.next,keeperTeam:'a'});
+    assert.equal(vm.runInContext('state.current.goalkeepers.a', app.context), roles.next);
+    assert.equal(vm.runInContext('JSON.stringify(state.players)', app.context), roles.positions);
+    assert.match(app.element('lineup').innerHTML, new RegExp(`data-temporary-keeper="${roles.old}"`));
+    assert.match(app.element('lineup').innerHTML, /Na linha/);
+    assert.equal(app.requests.filter(request=>request.options.method==='PUT').length, 2);
+});
+
+test('sharing a day includes the selected day and updates when another day is selected', async () => {
+    const app = await harness();
+    await app.click('share-day');
+    assert.equal(app.element('share-url').value, 'http://10.0.8.203:8001/?day=ef83f52e-9c39-4936-bd4b-fb360ea0b4f3');
+    vm.runInContext('days.push({...days[0],id:"another-day"});', app.context);
+    await app.trigger({chooseDay:'another-day'});
+    assert.equal(app.element('share-url').value, 'http://10.0.8.203:8001/?day=another-day');
+    await app.click('share-profile');
+    assert.equal(app.element('profile-share-url').value, 'http://10.0.8.203:8001/');
 });

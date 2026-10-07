@@ -159,6 +159,14 @@ class RachaGameService
                 continue;
             }
             $pool = array_values(array_filter($available, fn (array $player): bool => ! in_array($player['id'], $used, true)));
+            $previousGoalkeeper = $last['goalkeepers'][$team] ?? null;
+            if ($previousGoalkeeper !== null && in_array($previousGoalkeeper, array_column($pool, 'id'), true)) {
+                $teams[$team][] = $previousGoalkeeper;
+                $goalkeepers[$team] = $previousGoalkeeper;
+                $used[] = $previousGoalkeeper;
+
+                continue;
+            }
             $bank = array_values(array_filter($pool, fn (array $player): bool => ! in_array($player['id'], $oldPlayers, true)));
             $remaining = array_values(array_filter($pool, fn (array $player): bool => in_array($player['id'], $oldPlayers, true)));
             $preferredBank = array_values(array_filter($bank, fn (array $player): bool => ($player['position'] ?? 'outfield') === 'goalkeeper'));

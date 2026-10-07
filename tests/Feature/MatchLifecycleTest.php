@@ -31,7 +31,7 @@ test('finishing a match records the winner and prepares the next match on the sa
     $response = $this->postJson('/racha/finish', ['revision' => 0])->assertOk()->assertJsonPath('data.current', null)->assertJsonPath('data.matches.0.winner', 'a')->assertJsonPath('data.matches.0.dayId', $day->id)->assertJsonPath('data.next.dayId', $day->id);
     $next = $response->json('data.next');
     expect($next['teams']['a'])->toBe($data['current']['teams']['a']);
-    expect(array_intersect($next['teams']['b'], $data['current']['teams']['b']))->toBe([]);
+    expect(array_values(array_intersect($next['teams']['b'], $data['current']['teams']['b'])))->toBe([$data['current']['goalkeepers']['b']]);
     expect($next['teams']['b'])->toHaveCount(6);
     $prepared = $this->postJson('/racha/next', ['revision' => 1, 'dayId' => $day->id])->assertOk()->assertJsonPath('data.current.id', $next['id'])->assertJsonPath('data.current.elapsed', 0)->assertJsonPath('data.current.startedAt', null);
     expect($prepared->json('data.current.teams'))->toBe($next['teams']);
@@ -269,4 +269,13 @@ test('assist statistics remain attributed after the passer is substituted and th
     $stats = $this->getJson('/days/'.$day->id.'/statistics')->assertOk()->json();
     $player = collect($stats['players'])->firstWhere('id', $id);
     expect($player['assists'])->toBe(1)->and($player['goals'])->toBe(0);
+});
+
+test('a selected outfield goalkeeper stays in goal after losing and can be replaced for the following game', function () {
+    [$data] = lifecycleFixture();
+    $data['current']['goalkeepers']['b'] = $data['players'][8]['id'];
+    storeLifecycleState($data);
+    $response = $this->postJson('/racha/finish', ['revision' => 0])->assertOk();
+    expect($response->json('data.next.goalkeepers.b'))->toBe($data['players'][8]['id']);
+    expect($response->json('data.next.teams.b'))->toContain($data['players'][8]['id']);
 });

@@ -97,6 +97,7 @@ dialog { background: var(--surface); max-height: min(85vh, 85dvh); overscroll-be
 .stat strong, .day-summary strong { overflow-wrap: anywhere; }
 .player-row > span:not(.avatar), .ranking-row > span, .day-player-row > span, .draw-player > span, .match-player-stat > span { min-width: 0; overflow-wrap: anywhere; }
 .profile-registration summary, .history-card summary { min-height: 44px; align-content: center; }
+#profile-content { margin-top: 20px; }
 #profile-content > .panel { margin-bottom: 20px; }
 .inline-form { flex-wrap: wrap; }
 .inline-form input, .inline-form select { flex: 1 1 160px; }
@@ -319,13 +320,13 @@ dialog { background: var(--surface); max-height: min(85vh, 85dvh); overscroll-be
 }
 .presence-confirmed:disabled, .attendance-present:disabled { opacity: 1; }
 .presence-confirmed:hover:not(:disabled) { background: var(--presence-bg); border-color: var(--presence-text); }
-.attendance-decline, #cancel-attendance {
+.attendance-decline, #cancel-attendance, #attendance-list .presence-confirmed {
     background: var(--absence-bg);
     color: var(--absence-text);
     border: 1px solid var(--absence-border);
     font-weight: 650;
 }
-.attendance-decline:hover:not(:disabled), #cancel-attendance:hover:not(:disabled) { border-color: var(--absence-text); }
+.attendance-decline:hover:not(:disabled), #cancel-attendance:hover:not(:disabled), #attendance-list .presence-confirmed:hover:not(:disabled) { background: var(--absence-bg); border-color: var(--absence-text); }
 
 .day-banner-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .day-banner-actions button { min-height: 44px; }
@@ -335,3 +336,12 @@ dialog { background: var(--surface); max-height: min(85vh, 85dvh); overscroll-be
 
 .payment-not-applicable { text-align: center; color: var(--muted); font-size: 12px; }
 @media (max-width: 520px) { .payment-not-applicable { display: none; } }
+
+.general-rankings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+.general-ranking-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) 40px; gap: 10px; align-items: center; padding: 13px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+.general-ranking-row > span { overflow-wrap: anywhere; }
+.general-ranking-row strong { text-align: right; }
+.stat .statistics-name { font-size: 20px; }
+@media (max-width: 1000px) { .general-rankings { grid-template-columns: 1fr; } }
+
+.assist-icon { width: 14px; height: 14px; vertical-align: -2px; display: inline-block; }
