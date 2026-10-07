@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Player;
 use App\Models\RachaDay;
 use App\Services\RachaStateStore;
 use Illuminate\Http\JsonResponse;
@@ -29,6 +30,23 @@ class PlayerProfileController extends Controller
         $request->session()->put('player_id', $player['id']);
 
         return response()->json(['player' => $player]);
+    }
+
+    public function notifications(Request $request): JsonResponse
+    {
+        $player = Player::find($request->session()->get('player_id'));
+
+        return response()->json($player ? $player->notifications()->latest()->limit(50)->get() : []);
+    }
+
+    public function readNotification(Request $request, string $notification): JsonResponse
+    {
+        $player = Player::find($request->session()->get('player_id'));
+        abort_unless($player, 422);
+        $item = $player->notifications()->whereKey($notification)->firstOrFail();
+        $item->markAsRead();
+
+        return response()->json($item);
     }
 
     public function attendance(Request $request, RachaDay $day, RachaDayController $days): JsonResponse

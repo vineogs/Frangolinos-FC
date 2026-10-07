@@ -18,6 +18,8 @@ let loaded = false;
 let conflicted = false;
 let retryAfter = 0;
 let days = [];
+let profileNotifications = [];
+let editingDayId = null;
 let selectedDayId = new URLSearchParams(location.search).get('day');
 let setupPlayers = [];
 let setupAssignments = {};
@@ -36,7 +38,7 @@ try {profilePlayerId = localStorage.getItem('frangolinos-player');} catch {}
 const selectedDay = () => days.find((day) => day.id === selectedDayId);
 const activePlayers = () => state.players.filter((player) => player.active !== false);
 const confirmedPlayers = () => activePlayers().filter((player) => selectedDay()?.attendees.includes(player.id) && !selectedDay()?.departed?.includes(player.id));
-const dayLabel = (day) => `${date(`${day.date}T12:00:00`)} às ${day.time}`;
+const dayLabel = (day) => `${date(`${day.date}T12:00:00`)} das ${day.time}${day.end_time ? ` às ${day.end_time}` : ''}`;
 const isPlaying = (id) => Boolean(state.current && [...state.current.teams.a,...state.current.teams.b].includes(id));
 const playerName = (id) => state.players.find((player) => player.id === id)?.name ?? 'Jogador';
 const elapsed = () => state.current ? Math.min(state.current.duration * 60, state.current.elapsed + (state.current.startedAt ? Math.max(0, (Date.now() - state.current.startedAt) / 1000) : 0)) : 0;
@@ -403,19 +405,20 @@ function renderDays() {
     $('finish-day').disabled = busy || !loaded || !day || Boolean(day.finished_at) || state.current?.dayId === day.id;
     $('finish-day-central').hidden = !day || Boolean(day.finished_at);
     $('finish-day-central').disabled = $('finish-day').disabled;
+    $('edit-day').disabled = busy || !day || Boolean(day.finished_at);
     $('attendance-form').hidden = !day || Boolean(day.finished_at);
-    $('attendance-details').innerHTML = day ? `<p class="day-attendance-summary">${escapeHtml(day.location)} · ${day.time}<br><strong>${confirmedPlayers().filter((player) => player.position !== 'goalkeeper').length} jogadores de linha · ${confirmedPlayers().filter((player) => player.position === 'goalkeeper').length} goleiros confirmados</strong></p>` : empty('Escolha um dia marcado para confirmar a presença.');
+    $('attendance-details').innerHTML = day ? `<p class="day-attendance-summary">${escapeHtml(day.location)} · ${escapeHtml(dayLabel(day))}<br><strong>${day.attendees.filter((id) => state.players.find((player) => player.id === id)?.position !== 'goalkeeper').length}/15 jogadores de linha · ${day.attendees.filter((id) => state.players.find((player) => player.id === id)?.position === 'goalkeeper').length}/4 goleiros confirmados</strong></p>` : empty('Escolha um dia marcado para confirmar a presença.');
     const identity = $('attendance-player').value;
     $('attendance-player').innerHTML = '<option value="">Selecione seu nome</option>' + state.players.filter((player) => player.active !== false || day?.attendees.includes(player.id)).map((player) => `<option value="${player.id}">${escapeHtml(player.name)}${player.position === 'goalkeeper' ? ' · Goleiro' : ''}</option>`).join('');
     $('attendance-player').value = identity;
     renderPaymentSummary();
-    $('attendance-list').innerHTML = day ? state.players.filter((player) => player.active !== false || day.attendees.includes(player.id) || day.paid_players?.includes(player.id)).map((player) => {
+    $('attendance-list').innerHTML = day ? state.players.filter((player) => day.attendees.includes(player.id)).map((player) => {
         const present = day.attendees.includes(player.id);
         const departed = day.departed?.includes(player.id);
         const paid = day.paid_players?.includes(player.id) ?? false;
         const locked = busy || Boolean(day.finished_at) || departed || (isPlaying(player.id) && state.current?.dayId === day.id);
-        return `<div class="attendance-row ${departed ? 'departed-player' : ''}"><div class="attendance-identity"><span class="attendance-avatar" aria-hidden="true">${escapeHtml(player.name.slice(0,2).toUpperCase())}</span><div><strong>${escapeHtml(player.name)}</strong><small>${departed ? 'Saiu do racha' : player.position === 'goalkeeper' ? 'Prefere jogar no gol' : 'Jogador de linha'}</small></div></div><button class="presence-button ${present && !departed ? 'presence-confirmed' : 'presence-unconfirmed'}" data-attendance-player="${player.id}" data-present="${!present}" ${locked ? 'disabled' : ''} aria-label="${present ? 'Retirar' : 'Confirmar'} presença de ${escapeHtml(player.name)}">${departed ? 'Saiu do racha' : present ? '✓ Confirmado' : '＋ Confirmar'}</button>${present || paid ? `<button class="payment-button ${paid ? 'payment-paid' : 'payment-pending'}" data-payment-player="${player.id}" data-paid="${!paid}" ${busy ? 'disabled' : ''} aria-label="${paid ? 'Desmarcar' : 'Marcar'} pagamento de ${escapeHtml(player.name)}">${paid ? '✓ Pago' : 'Marcar pago'}</button>` : '<span class="payment-not-applicable" aria-label="Confirme a presença antes de marcar o pagamento">—</span>'}</div>`;
-    }).join('') || empty('Cadastre jogadores na aba Jogadores.') : '';
+        return `<div class="attendance-row ${departed ? 'departed-player' : ''}"><div class="attendance-identity"><span class="attendance-avatar" aria-hidden="true">${escapeHtml(player.name.slice(0,2).toUpperCase())}</span><div><strong>${escapeHtml(player.name)}</strong><small>${departed ? 'Saiu do racha' : player.position === 'goalkeeper' ? 'Prefere jogar no gol' : 'Jogador de linha'}</small></div></div><button class="presence-button ${present && !departed ? 'presence-confirmed' : 'presence-unconfirmed'}" data-attendance-player="${player.id}" data-present="${!present}" ${locked ? 'disabled' : ''} aria-label="${present ? 'Retirar' : 'Confirmar'} presença de ${escapeHtml(player.name)}">${departed ? 'Saiu do racha' : present ? '✓ Confirmado' : '＋ Confirmar'}</button>${player.position === 'goalkeeper' ? '<span class="payment-not-applicable">Isento</span>' : present || paid ? `<button class="payment-button ${paid ? 'payment-paid' : 'payment-pending'}" data-payment-player="${player.id}" data-paid="${!paid}" ${busy ? 'disabled' : ''} aria-label="${paid ? 'Desmarcar' : 'Marcar'} pagamento de ${escapeHtml(player.name)}">${paid ? '✓ Pago' : 'Marcar pago'}</button>` : '<span class="payment-not-applicable" aria-label="Confirme a presença antes de marcar o pagamento">—</span>'}</div>`;
+    }).join('') || empty('Nenhum jogador inscrito. Confirme sua presença pelo perfil ou adicione um jogador acima.') : '';
     if (day && $('attendance-list').innerHTML.includes('attendance-row')) $('attendance-list').innerHTML = '<div class="attendance-table-heading"><span>JOGADOR</span><span>PRESENÇA</span><span>PAGAMENTO</span></div>' + $('attendance-list').innerHTML;
     $('share-day').disabled = !day || busy;
     $('draw-day').disabled = !day || busy || Boolean(state.current) || Boolean(day.finished_at);
@@ -425,9 +428,9 @@ function renderDays() {
 function renderPaymentSummary() {
     const day = selectedDay();
     const stats = dailyStatistics(state,day);
-    const owed = new Set([...(day?.attendees ?? []), ...stats.players.filter((player) => player.games > 0).map((player) => player.id)]);
+    const owed = new Set([...(day?.attendees ?? []), ...stats.players.filter((player) => player.games > 0).map((player) => player.id)].filter((id) => state.players.find((player) => player.id === id)?.position !== 'goalkeeper'));
     const paid = [...owed].filter((id) => day?.paid_players?.includes(id)).length;
-    $('payment-summary').innerHTML = day ? `<div><strong>Pagamentos do dia</strong><small>${owed.size} confirmados ou participantes</small></div><div class="payment-totals"><span class="paid-total"><b>${paid}</b> pagos</span><span class="pending-total"><b>${owed.size - paid}</b> pendentes</span></div>` : '';
+    $('payment-summary').innerHTML = day ? `<div><strong>Pagamentos do dia</strong><small>${owed.size} jogadores de linha · goleiros isentos</small></div><div class="payment-totals"><span class="paid-total"><b>${paid}</b> pagos</span><span class="pending-total"><b>${owed.size - paid}</b> pendentes</span></div>` : '';
     $('payment-summary').hidden = !day;
 }
 async function setPayment(player, paid) {
@@ -469,9 +472,9 @@ $('day-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     if (busy) return;
     busy = true;
-    const data = {date:$('day-date').value,time:$('day-time').value,location:$('day-location').value.trim()};
+    const data = {date:$('day-date').value,time:$('day-time').value,end_time:$('day-end-time').value,location:$('day-location').value.trim()};
     render();
-    try {const day = await requestJson('/days', {method:'POST',body:JSON.stringify(data)}); selectedDayId = day.id; await refreshDays(); notice('Racha marcado! Copie o link para a turma confirmar presença.');}
+    try {const changed = Boolean(editingDayId); const day = await requestJson(changed ? `/days/${editingDayId}/schedule` : '/days', {method:changed ? 'PUT' : 'POST',body:JSON.stringify(data)}); selectedDayId = day.id; resetDayForm(); await refreshDays(); await refreshNotifications(); notice(changed ? 'Racha atualizado! Os perfis receberam uma notificação.' : 'Racha marcado! Os perfis receberam uma notificação para se inscrever.');}
     catch(error) {notice(error.message);}
     finally {busy = false; render();}
 });
@@ -532,7 +535,8 @@ setInterval(async () => {
     if (!loaded || busy || polling || document.querySelector('dialog[open]')) return;
     polling = true;
     try {
-        const [result, refreshedDays] = await Promise.all([requestJson('/racha'), requestJson('/days')]);
+        const [result, refreshedDays, notifications] = await Promise.all([requestJson('/racha'), requestJson('/days'), requestJson('/profile/notifications')]);
+        profileNotifications = notifications;
         if (busy || document.querySelector('dialog[open]')) return;
         const previous = state.current;
         state = result.data; revision = result.revision; days = refreshedDays; conflicted = false;
@@ -562,6 +566,7 @@ async function load() {
         if (profile.player) profilePlayerId = profile.player.id;
         else if (remembered) await rememberProfile(remembered.id);
         else profilePlayerId = null;
+        await refreshNotifications();
         loaded = true;
         if (new URLSearchParams(location.search).has('day')) openTab('days');
         $('save-status').textContent = '✓ Tudo salvo';
@@ -582,6 +587,7 @@ async function copyGeneralLink(field) {
 async function rememberProfile(player) {
     const result = await requestJson('/profile', {method:'PUT',body:JSON.stringify({player})});
     profilePlayerId = result.player.id;
+    await refreshNotifications();
     try {localStorage.setItem('frangolinos-player',profilePlayerId);} catch {}
 }
 async function addPlayer(name, position, ownProfile = false) {
@@ -636,16 +642,18 @@ function renderProfile() {
     for (const id of ['choose-profile','register-profile']) $(id).disabled = busy || !loaded;
     $('profile-content').hidden = !player;
     if (!player) return;
+    renderNotifications();
     const matches = state.matches.filter((match) => Object.values(match.participants ?? match.teams).flat().includes(player.id));
     const goals = matches.reduce((total,match) => total + match.goals.filter((goal) => goal.player === player.id).length,0);
     const wins = matches.filter((match) => (match.participants ?? match.teams)[match.winner]?.includes(player.id)).length;
     const assists = matches.reduce((total,match) => total + match.goals.filter((goal) => goal.assist === player.id).length,0);
     $('profile-stats').innerHTML = [['Partidas',matches.length],['Gols',goals],['Assistências',assists],['Vitórias',wins]].map(([label,value]) => `<article class="stat"><span>${label}</span><strong>${value}</strong><small>Minhas estatísticas gerais</small></article>`).join('');
-    const upcoming = days.filter((day) => !day.finished_at);
+    const upcoming = days.filter((day) => !day.finished_at && !day.declined_players?.includes(player.id));
+    $('profile-attendance-panel').hidden = upcoming.length === 0;
     $('profile-days').innerHTML = upcoming.map((day) => {
         const present = day.attendees.includes(player.id), departed = day.departed?.includes(player.id), paid = day.paid_players?.includes(player.id);
         const playing = state.current?.dayId === day.id && isPlaying(player.id);
-        return `<div class="profile-day"><div><strong>${escapeHtml(dayLabel(day))}</strong><p>${escapeHtml(day.location)}</p><small>${departed ? 'Você saiu deste racha' : present ? '✓ Presença confirmada' : 'Presença ainda não confirmada'}${present || paid ? ` · ${paid ? '✓ Pago' : 'Pagamento pendente'}` : ''}</small></div><div class="attendance-actions"><button class="${present ? 'attendance-present' : 'primary'}" data-my-attendance="${day.id}" data-present="true" ${busy || departed || present ? 'disabled' : ''}>${present ? '✓ Vou jogar' : 'Vou jogar'}</button><button class="secondary attendance-decline" data-my-attendance="${day.id}" data-present="false" ${busy || playing || departed ? 'disabled' : ''}>Não vou</button>${present || paid ? `<button class="payment-button profile-payment ${paid ? 'payment-paid' : 'payment-pending'}" data-my-payment="${day.id}" ${busy || paid ? 'disabled' : ''} aria-label="${paid ? 'Pagamento confirmado' : 'Confirmar meu pagamento'}">${paid ? '✓ Pago' : 'Confirmar pagamento'}</button>` : ''}</div></div>`;
+        return `<div class="profile-day"><div><strong>${escapeHtml(dayLabel(day))}</strong><p>${escapeHtml(day.location)}</p><small>${departed ? 'Você saiu deste racha' : present ? '✓ Presença confirmada' : 'Presença ainda não confirmada'}${player.position === 'goalkeeper' ? ' · Goleiro isento de pagamento' : present || paid ? ` · ${paid ? '✓ Pago' : 'Pagamento pendente'}` : ''}</small></div><div class="attendance-actions"><button class="${present ? 'attendance-present' : 'primary'}" data-my-attendance="${day.id}" data-present="true" ${busy || departed || present ? 'disabled' : ''}>${present ? '✓ Vou jogar' : 'Vou jogar'}</button><button class="secondary attendance-decline" data-my-attendance="${day.id}" data-present="false" ${busy || playing || departed ? 'disabled' : ''}>Não vou</button>${player.position === 'goalkeeper' ? '<span class="payment-not-applicable">Isento</span>' : present || paid ? `<button class="payment-button profile-payment ${paid ? 'payment-paid' : 'payment-pending'}" data-my-payment="${day.id}" ${busy || paid ? 'disabled' : ''} aria-label="${paid ? 'Pagamento confirmado' : 'Confirmar meu pagamento'}">${paid ? '✓ Pago' : 'Confirmar pagamento'}</button>` : ''}</div></div>`;
     }).join('') || empty('Nenhum racha aberto no momento.');
     $('profile-matches').innerHTML = [...matches].reverse().slice(0,5).map((match) => `<div class="profile-day"><span>${date(match.date)} · Azul ${score(match,'a')} × ${score(match,'b')} Vermelho</span><strong>${match.goals.filter((goal) => goal.player === player.id).length} gols</strong></div>`).join('') || empty('Suas partidas vão aparecer aqui assim que você jogar.');
 }
@@ -671,4 +679,43 @@ $('theme-toggle').addEventListener('click', () => {
 });
 systemTheme?.addEventListener('change', (event) => {
     if (!storedTheme()) applyTheme(event.matches ? 'dark' : 'light');
+});
+
+function resetDayForm() {
+    editingDayId = null;
+    $('save-day').textContent = '＋ Marcar racha';
+    $('cancel-edit-day').hidden = true;
+}
+$('edit-day').addEventListener('click', () => {
+    const day = selectedDay();
+    if (busy || !day || day.finished_at) return;
+    editingDayId = day.id;
+    $('day-date').value = day.date;
+    $('day-time').value = day.time;
+    $('day-end-time').value = day.end_time ?? '';
+    $('day-location').value = day.location;
+    $('save-day').textContent = 'Salvar alteração';
+    $('cancel-edit-day').hidden = false;
+    $('day-form').scrollIntoView({behavior:'smooth',block:'center'});
+});
+$('cancel-edit-day').addEventListener('click', resetDayForm);
+async function refreshNotifications() {
+    profileNotifications = await requestJson('/profile/notifications');
+}
+function renderNotifications() {
+    $('profile-notifications').innerHTML = profileNotifications.map((item) => `<div class="profile-day"><div><strong>${item.read_at ? '' : '● '}${escapeHtml(item.data.title)}</strong><p>${escapeHtml(dayLabel(item.data))} · ${escapeHtml(item.data.location)}</p></div><button class="secondary" data-open-notification="${item.id}" ${busy ? 'disabled' : ''}>Ver racha</button></div>`).join('') || empty('Você receberá avisos aqui quando um racha for marcado ou alterado.');
+}
+$('profile-notifications').addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-open-notification]');
+    if (!button || busy) return;
+    const item = profileNotifications.find((entry) => entry.id === button.dataset.openNotification);
+    if (!item) return;
+    busy = true;
+    try {
+        await requestJson(`/profile/notifications/${item.id}/read`, {method:'PUT'});
+        await refreshNotifications();
+        selectedDayId = item.data.day_id;
+        openTab('days');
+    } catch (error) {notice(error.message);}
+    finally {busy = false; render();}
 });

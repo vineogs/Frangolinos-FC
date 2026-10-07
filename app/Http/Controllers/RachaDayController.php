@@ -2,11 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Player;
 use App\Models\RachaDay;
+use App\Notifications\RachaScheduled;
 use App\Services\RachaStateStore;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Validation\ValidationException;
 
 class RachaDayController extends Controller
@@ -20,13 +23,53 @@ class RachaDayController extends Controller
 
     public function store(Request $request): JsonResponse
     {
-        $data = $request->validate([
+        $data = $this->scheduleData($request);
+
+        $day = DB::transaction(function () use ($data): RachaDay {
+            $day = RachaDay::create([...$data, 'attendees' => []]);
+            $this->notifyProfiles($day);
+
+            return $day;
+        });
+
+        return response()->json($day, 201);
+    }
+
+    public function schedule(Request $request, RachaDay $day): JsonResponse
+    {
+        $data = $this->scheduleData($request);
+        $updated = DB::transaction(function () use ($day, $data): RachaDay {
+            $locked = RachaDay::whereKey($day->id)->lockForUpdate()->firstOrFail();
+            if ($locked->finished_at !== null) {
+                throw ValidationException::withMessages(['day' => 'Este dia de racha já foi encerrado.']);
+            }
+            $locked->fill($data);
+            if ($locked->isDirty(['date', 'time', 'end_time', 'location'])) {
+                $locked->save();
+                $this->notifyProfiles($locked, true);
+            }
+
+            return $locked;
+        }, 3);
+
+        return response()->json($updated);
+    }
+
+    private function scheduleData(Request $request): array
+    {
+        return $request->validate([
             'date' => ['required', 'date_format:Y-m-d'],
             'time' => ['required', 'date_format:H:i'],
+            'end_time' => ['required', 'date_format:H:i', 'after:time'],
             'location' => ['required', 'string', 'max:120'],
         ]);
+    }
 
-        return response()->json(RachaDay::create([...$data, 'attendees' => []]), 201);
+    private function notifyProfiles(RachaDay $day, bool $changed = false): void
+    {
+        $state = json_decode($this->states->ensure()->data, true);
+        $this->states->syncPlayers($state['players']);
+        Notification::send(Player::whereIn('id', array_column($state['players'], 'id'))->get(), new RachaScheduled($day, $changed));
     }
 
     public function update(Request $request, RachaDay $day): JsonResponse
@@ -48,9 +91,18 @@ class RachaDayController extends Controller
             }
             $attendees = array_values(array_filter($locked->attendees, fn (string $id): bool => $id !== $data['player']));
             if ($data['present']) {
+                $goalkeeper = ($player['position'] ?? 'outfield') === 'goalkeeper';
+                $count = collect($state['players'])->filter(fn (array $candidate): bool => in_array($candidate['id'], $attendees, true) && (($candidate['position'] ?? 'outfield') === 'goalkeeper') === $goalkeeper)->count();
+                if ($count >= ($goalkeeper ? 4 : 15)) {
+                    throw ValidationException::withMessages(['player' => $goalkeeper ? 'As 4 vagas de goleiro já estão preenchidas.' : 'As 15 vagas de jogadores de linha já estão preenchidas.']);
+                }
                 $attendees[] = $data['player'];
             }
-            $locked->update(['attendees' => $attendees]);
+            $declined = array_values(array_filter($locked->declined_players ?? [], fn (string $id): bool => $id !== $data['player']));
+            if (! $data['present']) {
+                $declined[] = $data['player'];
+            }
+            $locked->update(['attendees' => $attendees, 'declined_players' => $declined]);
 
             return $locked;
         }, 3);

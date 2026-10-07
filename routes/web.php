@@ -32,3 +32,7 @@ Route::put('/profile', [PlayerProfileController::class, 'update'])->name('profil
 Route::put('/profile/days/{day}/attendance', [PlayerProfileController::class, 'attendance'])->whereUuid('day')->name('profile.attendance');
 
 Route::put('/profile/days/{day}/payments', [PlayerProfileController::class, 'payment'])->whereUuid('day')->name('profile.payments');
+
+Route::put('/days/{day}/schedule', [RachaDayController::class, 'schedule'])->whereUuid('day');
+Route::get('/profile/notifications', [PlayerProfileController::class, 'notifications']);
+Route::put('/profile/notifications/{notification}/read', [PlayerProfileController::class, 'readNotification'])->whereUuid('notification');

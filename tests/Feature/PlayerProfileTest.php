@@ -105,3 +105,18 @@ test('an archived profile cannot record a payment and a payment status is requir
     $this->putJson($url, ['paid' => true])->assertUnprocessable()->assertJsonValidationErrors('player');
     expect($day->fresh()->paid_players ?? [])->toBe([]);
 });
+
+test('declining a racha persists only for that player and confirming again clears the decline', function () {
+    $one = $this->postJson('/players', ['name' => 'Ana', 'position' => 'outfield'])->json('player');
+    $two = $this->postJson('/players', ['name' => 'Beto', 'position' => 'outfield'])->json('player');
+    $day = RachaDay::factory()->create(['attendees' => [$one['id'], $two['id']]]);
+    $other = RachaDay::factory()->create();
+    $this->putJson('/profile', ['player' => $one['id']])->assertOk();
+
+    $this->putJson('/profile/days/'.$day->id.'/attendance', ['present' => false])->assertOk()->assertJsonPath('declined_players', [$one['id']])->assertJsonPath('attendees', [$two['id']]);
+    expect($day->fresh()->declined_players)->toBe([$one['id']]);
+    expect($other->fresh()->declined_players)->toBeNull();
+    $this->getJson('/days')->assertJsonPath('0.declined_players', [$one['id']]);
+    $this->putJson('/profile/days/'.$day->id.'/attendance', ['present' => true])->assertOk()->assertJsonPath('declined_players', []);
+    expect($day->fresh()->attendees)->toContain($one['id'], $two['id']);
+});

@@ -10,7 +10,7 @@ function paymentFixture(): array
 {
     $players = [
         ['id' => '10000000-0000-4000-8000-000000000001', 'name' => 'Ana', 'position' => 'outfield'],
-        ['id' => '10000000-0000-4000-8000-000000000002', 'name' => 'Beto', 'position' => 'goalkeeper'],
+        ['id' => '10000000-0000-4000-8000-000000000002', 'name' => 'Beto', 'position' => 'outfield'],
     ];
     DB::table('racha_states')->where('id', 1)->update(['revision' => 7, 'data' => json_encode(['players' => $players, 'matches' => [], 'current' => null])]);
 

@@ -23,6 +23,10 @@ class DayPaymentController extends Controller
             if (! in_array($input['player'], array_column($state['players'], 'id'), true)) {
                 throw ValidationException::withMessages(['player' => 'Selecione um jogador cadastrado para registrar o pagamento.']);
             }
+            $player = collect($state['players'])->firstWhere('id', $input['player']);
+            if (($player['position'] ?? 'outfield') === 'goalkeeper') {
+                throw ValidationException::withMessages(['player' => 'Goleiros são isentos de pagamento.']);
+            }
             $paid = array_values(array_filter($locked->paid_players ?? [], fn (string $id): bool => $id !== $input['player']));
             if ($input['paid']) {
                 $paid[] = $input['player'];

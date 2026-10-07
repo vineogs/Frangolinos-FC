@@ -67,6 +67,7 @@ async function harness({rejectSave = false, rejectPlayer = false, responses = {}
         if (url === '/days') return {ok:true,json:async()=>[day]};
         if (url === '/players' && rejectPlayer) return {ok:false,status:422,json:async()=>({errors:{name:['Este nome já está cadastrado.']}})};
         if (responses[url]) return {ok:true,json:async()=>cloneState(typeof responses[url] === 'function' ? responses[url](options.body ? JSON.parse(options.body) : null,data) : responses[url])};
+        if (url === '/profile/notifications') return {ok:true,json:async()=>[]};
         if (options.method === 'PUT') {
             if (rejectSave) return {ok:false,status:422,json:async()=>({errors:{data:['O jogador retirou sua presença.']}})};
             data = JSON.parse(options.body).data;
@@ -182,13 +183,13 @@ test('the substitution form can remove a player only for the current day and sen
 test('payment toggles are saved separately from attendance and match state', async () => {
     const dayId = 'ef83f52e-9c39-4936-bd4b-fb360ea0b4f3';
     const app = await harness({responses:{[`/days/${dayId}/payments`]:(input)=>({id:dayId,date:'2026-10-10',time:'19:00',location:'Quadra',attendees:players.map(player=>player.id),paid_players:input.paid ? [input.player] : []})}});
-    await app.trigger({paymentPlayer:players[0].id,paid:'true'});
+    await app.trigger({paymentPlayer:players[3].id,paid:'true'});
     assert.match(app.element('attendance-list').innerHTML,/✓ Pago/);
-    await app.trigger({paymentPlayer:players[0].id,paid:'false'});
+    await app.trigger({paymentPlayer:players[3].id,paid:'false'});
     const writes = app.requests.filter(request=>request.options.method==='PUT');
     assert.equal(writes.length,2);
-    assert.deepEqual(JSON.parse(writes[0].options.body),{player:players[0].id,paid:true});
-    assert.deepEqual(JSON.parse(writes[1].options.body),{player:players[0].id,paid:false});
+    assert.deepEqual(JSON.parse(writes[0].options.body),{player:players[3].id,paid:true});
+    assert.deepEqual(JSON.parse(writes[1].options.body),{player:players[3].id,paid:false});
     assert.equal(vm.runInContext('state.current',app.context),null);
 });
 
@@ -298,7 +299,7 @@ test('an explicit dark preference overrides the device light theme', async () =>
 
 test('the profile payment button records only the selected player payment and updates the summary', async () => {
     const dayId = 'ef83f52e-9c39-4936-bd4b-fb360ea0b4f3';
-    const app = await harness({responses:{'/profile':()=>({player:players[0]}),[`/profile/days/${dayId}/payments`]:()=>({id:dayId,date:'2026-10-10',time:'19:00',location:'Quadra',attendees:players.map(player=>player.id),paid_players:[players[0].id]})}});
+    const app = await harness({responses:{'/profile':()=>({player:players[3]}),[`/profile/days/${dayId}/payments`]:()=>({id:dayId,date:'2026-10-10',time:'19:00',location:'Quadra',attendees:players.map(player=>player.id),paid_players:[players[3].id]})}});
     assert.match(app.element('profile-days').innerHTML,/Confirmar pagamento/);
     await app.trigger({myPayment:dayId});
     const write = app.requests.find(request=>request.url===`/profile/days/${dayId}/payments`);
@@ -398,14 +399,69 @@ test('the central can open day closure and blocks closing while a match is activ
 
 
 test('payment actions appear only after attendance is confirmed while recorded payments remain visible', async () => {
-    const app = await harness({responses:{'/profile':()=>({player:players[0]})}});
+    const app = await harness({responses:{'/profile':()=>({player:players[3]})}});
     vm.runInContext('days[0].attendees = []; render();',app.context);
     assert.doesNotMatch(app.element('profile-days').innerHTML,/data-my-payment/);
     assert.doesNotMatch(app.element('attendance-list').innerHTML,/data-payment-player/);
     assert.doesNotMatch(app.element('profile-days').innerHTML,/Pagamento pendente/);
-    vm.runInContext(`days[0].attendees = [${JSON.stringify(players[0].id)}]; render();`,app.context);
+    vm.runInContext(`days[0].attendees = [${JSON.stringify(players[3].id)}]; render();`,app.context);
     assert.match(app.element('profile-days').innerHTML,/Confirmar pagamento/);
     assert.match(app.element('attendance-list').innerHTML,/Marcar pago/);
-    vm.runInContext(`days[0].attendees = []; days[0].paid_players = [${JSON.stringify(players[0].id)}]; render();`,app.context);
+    vm.runInContext(`days[0].attendees = []; days[0].paid_players = [${JSON.stringify(players[3].id)}]; render();`,app.context);
     assert.match(app.element('profile-days').innerHTML,/✓ Pago/);
+});
+
+
+test('the day lists only registered players and excludes goalkeepers from pending payments', async () => {
+    const app = await harness({responses:{'/profile':()=>({player:players[0]})}});
+    vm.runInContext(`days[0].attendees = [${JSON.stringify(players[0].id)}, ${JSON.stringify(players[3].id)}]; render();`,app.context);
+    assert.match(app.element('attendance-list').innerHTML,/Jogador 1</);
+    assert.match(app.element('attendance-list').innerHTML,/Jogador 4</);
+    assert.doesNotMatch(app.element('attendance-list').innerHTML,/Jogador 2</);
+    assert.equal((app.element('attendance-list').innerHTML.match(/data-payment-player/g) ?? []).length,1);
+    assert.match(app.element('attendance-list').innerHTML,/Isento/);
+    assert.match(app.element('payment-summary').innerHTML,/<b>1<\/b> pendentes/);
+    assert.doesNotMatch(app.element('profile-days').innerHTML,/data-my-payment/);
+    assert.match(app.element('profile-days').innerHTML,/Goleiro isento/);
+});
+
+test('editing a schedule sends both times and retains the selected day', async () => {
+    const dayId = 'ef83f52e-9c39-4936-bd4b-fb360ea0b4f3';
+    const app = await harness({responses:{[`/days/${dayId}/schedule`]:(input)=>({id:dayId,...input,attendees:[]})}});
+    await app.click('edit-day');
+    assert.equal(app.element('day-time').value,'19:00');
+    app.element('day-end-time').value = '22:00';
+    app.element('day-time').value = '20:00';
+    await app.submit('day-form');
+    const write = app.requests.find(request=>request.url===`/days/${dayId}/schedule`);
+    assert.equal(write.options.method,'PUT');
+    assert.equal(JSON.parse(write.options.body).end_time,'22:00');
+    assert.equal(JSON.parse(write.options.body).time,'20:00');
+    assert.equal(app.element('cancel-edit-day').hidden,true);
+});
+
+test('profile notifications display the new schedule and opening one marks only that notice read', async () => {
+    const dayId = 'ef83f52e-9c39-4936-bd4b-fb360ea0b4f3';
+    let read = false;
+    const item = () => ({id:'notice-id',read_at:read ? '2026-10-07' : null,data:{day_id:dayId,title:'Novo dia de racha!',date:'2026-10-10',time:'19:00',end_time:'21:00',location:'Quadra'}});
+    const app = await harness({responses:{'/profile':()=>({player:players[0]}),'/profile/notifications':()=>[item()],'/profile/notifications/notice-id/read':()=>{read=true;return item();}}});
+    assert.match(app.element('profile-notifications').innerHTML,/● Novo dia de racha!/);
+    assert.match(app.element('profile-notifications').innerHTML,/19:00 às 21:00/);
+    await app.element('profile-notifications').handlers.click({target:{closest:()=>({dataset:{openNotification:'notice-id'}})}});
+    assert.equal(read,true);
+    assert.doesNotMatch(app.element('profile-notifications').innerHTML,/● /);
+    assert.equal(app.element('page-title').textContent,'Dias de racha');
+});
+
+
+test('declining hides that racha from my presence and other profiles still see it', async () => {
+    const dayId = 'ef83f52e-9c39-4936-bd4b-fb360ea0b4f3';
+    const app = await harness({responses:{'/profile':()=>({player:players[3]}),[`/profile/days/${dayId}/attendance`]:()=>({id:dayId,date:'2026-10-10',time:'19:00',location:'Quadra',attendees:[],declined_players:[players[3].id]})}});
+    assert.equal(app.element('profile-attendance-panel').hidden,false);
+    await app.trigger({myAttendance:dayId,present:'false'});
+    assert.equal(app.element('profile-attendance-panel').hidden,true);
+    assert.doesNotMatch(app.element('profile-days').innerHTML,/data-my-attendance/);
+    vm.runInContext(`profilePlayerId = ${JSON.stringify(players[4].id)}; render();`,app.context);
+    assert.equal(app.element('profile-attendance-panel').hidden,false);
+    assert.match(app.element('profile-days').innerHTML,/data-my-attendance/);
 });

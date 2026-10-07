@@ -15,8 +15,8 @@ function attendancePlayer(): string
 }
 
 test('a day can be scheduled with date time and location', function () {
-    $this->postJson('/days', ['date' => '2026-10-10', 'time' => '19:00', 'location' => 'Quadra dos amigos'])->assertCreated()->assertJsonPath('attendees', []);
-    $this->assertDatabaseHas('racha_days', ['date' => '2026-10-10', 'time' => '19:00', 'location' => 'Quadra dos amigos']);
+    $this->postJson('/days', ['date' => '2026-10-10', 'time' => '19:00', 'end_time' => '21:00', 'location' => 'Quadra dos amigos'])->assertCreated()->assertJsonPath('attendees', []);
+    $this->assertDatabaseHas('racha_days', ['date' => '2026-10-10', 'time' => '19:00', 'end_time' => '21:00', 'location' => 'Quadra dos amigos']);
     $this->getJson('/days')->assertOk()->assertJsonCount(1);
 });
 
