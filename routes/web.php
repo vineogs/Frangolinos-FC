@@ -36,3 +36,5 @@ Route::put('/profile/days/{day}/payments', [PlayerProfileController::class, 'pay
 Route::put('/days/{day}/schedule', [RachaDayController::class, 'schedule'])->whereUuid('day');
 Route::get('/profile/notifications', [PlayerProfileController::class, 'notifications']);
 Route::put('/profile/notifications/{notification}/read', [PlayerProfileController::class, 'readNotification'])->whereUuid('notification');
+
+Route::post('/days/{day}/arrival', [MatchLifecycleController::class, 'arrival'])->whereUuid('day');

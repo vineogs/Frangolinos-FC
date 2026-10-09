@@ -10,7 +10,7 @@ class RachaGameService
 {
     public function elapsed(array $match): float
     {
-        return min($match['duration'] * 60, $match['elapsed'] + ($match['startedAt'] === null ? 0 : max(0, (now()->getTimestampMs() - $match['startedAt']) / 1000)));
+        return $match['elapsed'] + ($match['startedAt'] === null ? 0 : max(0, (now()->getTimestampMs() - $match['startedAt']) / 1000));
     }
 
     public function score(array $match, string $team): int
@@ -24,7 +24,7 @@ class RachaGameService
         if ($match === null || ($match['status'] ?? 'regular') === 'penalties') {
             return $data;
         }
-        if ($this->elapsed($match) >= $match['duration'] * 60 || max($this->score($match, 'a'), $this->score($match, 'b')) >= 2) {
+        if (! ($match['free'] ?? false) && $match['duration'] === 10 && max($this->score($match, 'a'), $this->score($match, 'b')) >= 2) {
             return $this->finish($data);
         }
 
@@ -51,7 +51,7 @@ class RachaGameService
             return $data;
         }
         $match['winner'] = $penaltyWinner ?? ($a > $b ? 'a' : 'b');
-        $match['reason'] = $penaltyWinner !== null ? 'penalties' : (max($a, $b) >= 2 ? 'goals' : ($match['elapsed'] >= $match['duration'] * 60 ? 'time' : 'manual'));
+        $match['reason'] = $penaltyWinner !== null ? 'penalties' : (! ($match['free'] ?? false) && $match['duration'] === 10 && max($a, $b) >= 2 ? 'goals' : (! ($match['free'] ?? false) && $match['elapsed'] >= $match['duration'] * 60 ? 'time' : 'manual'));
         $match['status'] = 'finished';
         $match['participants'] ??= $match['teams'];
         $data['matches'][] = $match;
@@ -65,7 +65,7 @@ class RachaGameService
 
     public function available(array $data, RachaDay $day): array
     {
-        return array_values(array_filter($data['players'], fn (array $player): bool => ($player['active'] ?? true) && in_array($player['id'], $day->attendees, true) && ! in_array($player['id'], $day->departed ?? [], true)));
+        return array_values(array_filter($data['players'], fn (array $player): bool => ($player['active'] ?? true) && in_array($player['id'], $day->attendees, true) && in_array($player['id'], $day->arrived_players ?? $day->attendees, true) && ! in_array($player['id'], $day->departed ?? [], true)));
     }
 
     public function statistics(array $data, RachaDay $day): array
@@ -107,6 +107,26 @@ class RachaGameService
         return $pool;
     }
 
+    public function needsRedraw(array $data, RachaDay $day): bool
+    {
+        $matches = array_values(array_filter($data['matches'], fn (array $match): bool => ($match['dayId'] ?? null) === $day->id));
+        $last = array_pop($matches);
+        if (! $last || ! isset($last['winner'])) {
+            return false;
+        }
+        $winner = $last['winner'];
+        $streak = 1;
+        foreach (array_reverse($matches) as $previous) {
+            if (($previous['winner'] ?? null) !== $winner || count(array_intersect($last['teams'][$winner], $previous['teams'][$winner])) < 5) {
+                break;
+            }
+            $streak++;
+            $last = $previous;
+        }
+
+        return $streak % 3 === 0;
+    }
+
     public function nextLineup(array $data, RachaDay $day, bool $reusePreview = false): array
     {
         if ($day->finished_at !== null) {
@@ -131,6 +151,11 @@ class RachaGameService
         $matches = array_values(array_filter($data['matches'], fn (array $match): bool => ($match['dayId'] ?? null) === $day->id));
         $last = $matches === [] ? null : $matches[array_key_last($matches)];
         $winner = $last === null ? null : ($last['winner'] ?? ($this->score($last, 'a') === $this->score($last, 'b') ? null : ($this->score($last, 'a') > $this->score($last, 'b') ? 'a' : 'b')));
+        $redraw = $this->needsRedraw($data, $day);
+        $previousWinner = $winner;
+        if ($redraw) {
+            $winner = null;
+        }
         $loser = $winner === 'a' ? 'b' : 'a';
         $oldPlayers = $last === null ? [] : array_merge($last['teams']['a'], $last['teams']['b']);
         if (count($available) < 12) {
@@ -147,6 +172,9 @@ class RachaGameService
                 $goalkeepers[$winner] = $last['goalkeepers'][$winner];
             } else {
                 $preferred = array_values(array_filter($available, fn (array $player): bool => ($player['position'] ?? 'outfield') === 'goalkeeper' && in_array($player['id'], $teams[$winner], true)));
+                if ($preferred === []) {
+                    $preferred = array_values(array_filter($available, fn (array $player): bool => ($player['position'] ?? 'outfield') === 'both' && in_array($player['id'], $teams[$winner], true)));
+                }
                 if ($preferred !== []) {
                     $goalkeepers[$winner] = $preferred[0]['id'];
                 } elseif (count($teams[$winner]) === 6) {
@@ -159,7 +187,7 @@ class RachaGameService
                 continue;
             }
             $pool = array_values(array_filter($available, fn (array $player): bool => ! in_array($player['id'], $used, true)));
-            $previousGoalkeeper = $last['goalkeepers'][$team] ?? null;
+            $previousGoalkeeper = $redraw ? null : ($last['goalkeepers'][$team] ?? null);
             if ($previousGoalkeeper !== null && in_array($previousGoalkeeper, array_column($pool, 'id'), true)) {
                 $teams[$team][] = $previousGoalkeeper;
                 $goalkeepers[$team] = $previousGoalkeeper;
@@ -171,7 +199,9 @@ class RachaGameService
             $remaining = array_values(array_filter($pool, fn (array $player): bool => in_array($player['id'], $oldPlayers, true)));
             $preferredBank = array_values(array_filter($bank, fn (array $player): bool => ($player['position'] ?? 'outfield') === 'goalkeeper'));
             $preferredRemaining = array_values(array_filter($remaining, fn (array $player): bool => ($player['position'] ?? 'outfield') === 'goalkeeper'));
-            $candidates = array_merge($this->prioritize($preferredBank, $games), $this->prioritize($preferredRemaining, $games), $this->prioritize($bank, $games), $this->prioritize($remaining, $games));
+            $dualBank = array_values(array_filter($bank, fn (array $player): bool => ($player['position'] ?? 'outfield') === 'both'));
+            $dualRemaining = array_values(array_filter($remaining, fn (array $player): bool => ($player['position'] ?? 'outfield') === 'both'));
+            $candidates = array_merge($this->prioritize($preferredBank, $games), $this->prioritize($preferredRemaining, $games), $this->prioritize($dualBank, $games), $this->prioritize($dualRemaining, $games), $this->prioritize($bank, $games), $this->prioritize($remaining, $games));
             $goalkeeper = $candidates[0]['id'];
             $teams[$team][] = $goalkeeper;
             $goalkeepers[$team] = $goalkeeper;
@@ -181,10 +211,25 @@ class RachaGameService
             $pool = array_values(array_filter($available, fn (array $player): bool => ! in_array($player['id'], $used, true)));
             $bank = array_values(array_filter($pool, fn (array $player): bool => ! in_array($player['id'], $oldPlayers, true)));
             $remaining = array_values(array_filter($pool, fn (array $player): bool => in_array($player['id'], $oldPlayers, true)));
-            $candidates = array_merge($this->prioritize($bank, $games), $this->prioritize($remaining, $games));
+            $bankLine = array_values(array_filter($bank, fn (array $player): bool => ($player['position'] ?? 'outfield') !== 'goalkeeper'));
+            $bankKeepers = array_values(array_filter($bank, fn (array $player): bool => ($player['position'] ?? 'outfield') === 'goalkeeper'));
+            $candidates = array_merge($this->prioritize($bankLine, $games), $this->prioritize($bankKeepers, $games), $this->prioritize($remaining, $games));
             foreach (array_slice($candidates, 0, 6 - count($teams[$team])) as $player) {
                 $teams[$team][] = $player['id'];
                 $used[] = $player['id'];
+            }
+        }
+        if ($redraw) {
+            foreach (['a', 'b'] as $team) {
+                $retained = array_intersect($teams[$team], $last['teams'][$previousWinner]);
+                $other = $team === 'a' ? 'b' : 'a';
+                while (count($retained) >= 5) {
+                    $from = array_values(array_diff($retained, [$goalkeepers[$team]]))[0];
+                    $to = array_values(array_diff($teams[$other], $last['teams'][$previousWinner], [$goalkeepers[$other]]))[0];
+                    $teams[$team][array_search($from, $teams[$team], true)] = $to;
+                    $teams[$other][array_search($to, $teams[$other], true)] = $from;
+                    $retained = array_intersect($teams[$team], $last['teams'][$previousWinner]);
+                }
             }
         }
         $bench = array_column($this->prioritize(array_values(array_filter($available, fn (array $player): bool => ! in_array($player['id'], $used, true))), $games), 'id');
@@ -199,7 +244,7 @@ class RachaGameService
         }
         try {
             $data['next'] = $this->nextLineup($data, $day);
-            $data['nextMessage'] = null;
+            $data['nextMessage'] = $this->needsRedraw($data, $day) ? 'Três vitórias seguidas! Os times foram sorteados novamente.' : null;
         } catch (ValidationException $exception) {
             $data['next'] = null;
             $data['nextMessage'] = collect($exception->errors())->flatten()->first();
@@ -246,6 +291,9 @@ class RachaGameService
         }
         if ($incoming !== null && $position === 'goalkeeper' && ($players[$incoming]['position'] ?? 'outfield') !== 'goalkeeper') {
             $preferred = array_filter($this->available($data, $day), fn (array $player): bool => ($player['position'] ?? 'outfield') === 'goalkeeper' && ! in_array($player['id'], $playing, true) && ! in_array($player['id'], $match['participants'][$otherTeam] ?? [], true));
+            if ($preferred === [] && ($players[$incoming]['position'] ?? 'outfield') !== 'both') {
+                $preferred = array_filter($this->available($data, $day), fn (array $player): bool => ($player['position'] ?? 'outfield') === 'both' && ! in_array($player['id'], $playing, true) && ! in_array($player['id'], $match['participants'][$otherTeam] ?? [], true));
+            }
             if ($preferred !== []) {
                 throw ValidationException::withMessages(['replacement' => 'Há um goleiro disponível no banco. Dê prioridade a ele para assumir o gol.']);
             }

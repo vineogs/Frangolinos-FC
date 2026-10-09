@@ -37,11 +37,11 @@ let profilePlayerId = null;
 try {profilePlayerId = localStorage.getItem('frangolinos-player');} catch {}
 const selectedDay = () => days.find((day) => day.id === selectedDayId);
 const activePlayers = () => state.players.filter((player) => player.active !== false);
-const confirmedPlayers = () => activePlayers().filter((player) => selectedDay()?.attendees.includes(player.id) && !selectedDay()?.departed?.includes(player.id));
+const confirmedPlayers = () => activePlayers().filter((player) => selectedDay()?.attendees.includes(player.id) && (selectedDay()?.arrived_players ?? selectedDay()?.attendees ?? []).includes(player.id) && !selectedDay()?.departed?.includes(player.id));
 const dayLabel = (day) => `${date(`${day.date}T12:00:00`)} das ${day.time}${day.end_time ? ` às ${day.end_time}` : ''}`;
 const isPlaying = (id) => Boolean(state.current && [...state.current.teams.a,...state.current.teams.b].includes(id));
 const playerName = (id) => state.players.find((player) => player.id === id)?.name ?? 'Jogador';
-const elapsed = () => state.current ? Math.min(state.current.duration * 60, state.current.elapsed + (state.current.startedAt ? Math.max(0, (Date.now() - state.current.startedAt) / 1000) : 0)) : 0;
+const elapsed = () => state.current ? state.current.elapsed + (state.current.startedAt ? Math.max(0, (Date.now() - state.current.startedAt) / 1000) : 0) : 0;
 const score = (match, team) => match?.goals.filter((goal) => goal.team === team).length ?? 0;
 const empty = (message) => `<div class="empty"><span class="empty-icon">◎</span>${message}</div>`;
 function notice(message) {
@@ -141,9 +141,10 @@ async function lifecycle(url, input = {}) {
 function renderClock() {
     const match = state.current;
     const seconds = elapsed();
-    $('clock').textContent = time(remainingSeconds(match));
-    if (match && seconds >= match.duration * 60) $('add-goal').disabled = true;
-    $('clock-caption').textContent = !match ? 'Pronto para mais uma partida de 10 minutos' : match.status === 'penalties' ? 'Tempo encerrado · defina o vencedor nos pênaltis' : match.vacancies?.length ? 'Partida pausada · preencha as vagas de substituição' : `${time(seconds)} jogados · 2 gols para vencer`;
+    $('clock').textContent = time(match?.free ? Math.floor(seconds) : remainingSeconds(match));
+    $('clock-label').textContent = match?.free ? 'TEMPO JOGADO' : 'TEMPO RESTANTE';
+    if (match && !match.free && seconds >= match.duration * 60 && match.status !== 'penalties') soundTimeAlarm(match);
+    $('clock-caption').textContent = !match ? 'Pronto para mais uma partida de 10 minutos' : match.status === 'penalties' ? 'Tempo encerrado · defina o vencedor nos pênaltis' : match.vacancies?.length ? 'Partida pausada · preencha as vagas de substituição' : match.free ? `${time(seconds)} jogados · partida livre, sem limites` : seconds >= match.duration * 60 ? 'Tempo esgotado · finalize quando a bola sair' : `${time(seconds)} jogados · ${match.duration === 15 ? 'sem limite de gols' : '2 gols para vencer'}`;
 }
 function render() {
     const match = state.current;
@@ -154,12 +155,17 @@ function render() {
     const leader = dayRanking[0]?.goals > 0 ? dayRanking[0] : null;
     const leaders = leader ? dayRanking.filter((player) => player.goals === leader.goals) : [];
     $('nav-count').textContent = state.players.length;
-    $('stat-players').textContent = day?.attendees.length ?? 0;
+    const presentPlayers = activePlayers().filter((player) => day?.attendees.includes(player.id) && (day.arrived_players ?? day.attendees).includes(player.id) && !day.departed?.includes(player.id));
+    $('present-players-count').textContent = presentPlayers.length;
+    $('present-players').innerHTML = presentPlayers.map((player) => `<div class="player-row"><span class="attendance-avatar" aria-hidden="true">${escapeHtml(player.name.slice(0,2).toUpperCase())}</span><span>${escapeHtml(player.name)}</span></div>`).join('') || empty('Nenhum jogador chegou ainda.');
+    $('stat-players').textContent = day ? activePlayers().filter((player) => day.attendees.includes(player.id) && (day.arrived_players ?? day.attendees).includes(player.id) && !day.departed?.includes(player.id)).length : 0;
     $('stat-matches').textContent = day ? state.matches.filter((item) => item.dayId === day.id).length : 0;
     $('stat-goals').textContent = dayMatchesForStats.reduce((total, item) => total + item.goals.length, 0);
     $('stat-leader').textContent = leaders.length > 1 ? `${leaders.length} empatados` : leader?.name ?? '—';
     $('stat-leader-goals').textContent = leader ? `${leader.goals} ${leader.goals === 1 ? 'gol' : 'gols'} no dia` : 'Nenhum gol neste dia';
     renderGeneralStatistics(ranking);
+    $('free-match').disabled = busy || !match || conflicted || Boolean(match.startedAt || match.elapsed > 0 || match.goals.length || match.vacancies?.length || match.status === 'penalties');
+
     $('score-a').textContent = score(match, 'a');
     $('score-b').textContent = score(match, 'b');
     $('team-a-count').textContent = match?.goalkeepers ? '5 de linha + 1 goleiro' : `${match?.teams.a.length ?? 0} jogadores`;
@@ -175,7 +181,7 @@ function render() {
     $('create-match').textContent = busy ? 'Salvando…' : 'Criar partida';
     $('new-match').disabled = busy || !loaded || conflicted || Boolean(match);
     $('toggle-clock').disabled = busy || !match || conflicted || match.status === 'penalties' || Boolean(match.vacancies?.length);
-    $('add-goal').disabled = busy || !match || conflicted || match.status === 'penalties' || Boolean(match.vacancies?.length) || elapsed() >= match.duration * 60 || (!match.startedAt && match.elapsed === 0);
+    $('add-goal').disabled = busy || !match || conflicted || match.status === 'penalties' || Boolean(match.vacancies?.length) || (!match.startedAt && match.elapsed === 0);
     $('finish-match').disabled = busy || !match || conflicted || match.status === 'penalties';
     $('penalties-card').hidden = match?.status !== 'penalties';
     $('events-count').textContent = `${match?.goals.length ?? 0} gols`;
@@ -185,7 +191,7 @@ function render() {
     const displayedPlayers = state.players.filter((player) => ($('show-archived').checked || player.active !== false) && player.name.toLocaleLowerCase('pt-BR').includes($('player-search').value.toLocaleLowerCase('pt-BR')));
     $('players-list').innerHTML = displayedPlayers.length ? displayedPlayers.map((player) => {
         const stats = ranking.find((item) => item.id === player.id);
-        return `<div class="player-row ${player.active === false ? 'archived' : ''}"><span class="avatar">${escapeHtml(player.name.slice(0,2).toUpperCase())}</span><span>${escapeHtml(player.name)}</span><div class="player-position-controls"><small>${stats.games} jogos · ${stats.goals} gols · ${stats.assists} assistências</small><select class="position-select" data-position-player="${player.id}" aria-label="Posição de ${escapeHtml(player.name)}" ${busy || !loaded || conflicted || (match && [...match.teams.a,...match.teams.b].includes(player.id)) ? 'disabled' : ''}><option value="outfield" ${player.position !== 'goalkeeper' ? 'selected' : ''}>Jogador de linha</option><option value="goalkeeper" ${player.position === 'goalkeeper' ? 'selected' : ''}>Goleiro</option></select></div><button class="text-button" data-edit-player="${player.id}">Editar</button><button class="text-button" data-archive-player="${player.id}" ${isPlaying(player.id) || busy ? 'disabled' : ''}>${player.active === false ? 'Reativar' : 'Arquivar'}</button></div>`;
+        return `<div class="player-row ${player.active === false ? 'archived' : ''}"><span class="avatar">${escapeHtml(player.name.slice(0,2).toUpperCase())}</span><span>${escapeHtml(player.name)}</span><div class="player-position-controls"><small>${stats.games} jogos · ${stats.goals} gols · ${stats.assists} assistências</small><select class="position-select" data-position-player="${player.id}" aria-label="Posição de ${escapeHtml(player.name)}" ${busy || !loaded || conflicted || (match && [...match.teams.a,...match.teams.b].includes(player.id)) ? 'disabled' : ''}><option value="outfield" ${(player.position ?? 'outfield') === 'outfield' ? 'selected' : ''}>Jogador de linha</option><option value="goalkeeper" ${player.position === 'goalkeeper' ? 'selected' : ''}>Goleiro</option><option value="both" ${player.position === 'both' ? 'selected' : ''}>Linha e goleiro</option></select></div><button class="text-button" data-edit-player="${player.id}">Editar</button><button class="text-button" data-archive-player="${player.id}" ${isPlaying(player.id) || busy ? 'disabled' : ''}>${player.active === false ? 'Reativar' : 'Arquivar'}</button></div>`;
     }).join('') : empty('A turma ainda não chegou.<br>Adicione o primeiro jogador acima.');
     const matchDay = days.find((day) => day.id === match?.dayId);
     $('departed-lineup').innerHTML = match && matchDay?.departed?.length ? `<div class="lineup-title bank-text">Fora do racha hoje</div>${matchDay.departed.map((id) => `<div class="player-row"><span>${escapeHtml(playerName(id))}</span><button class="text-button" data-return-player="${id}" data-return-day="${matchDay.id}" ${busy ? 'disabled' : ''}>Retornar ao banco</button></div>`).join('')}` : '';
@@ -195,7 +201,7 @@ function render() {
         if (index === 0 || player.goals !== ranking[index-1].goals) rank = index + 1;
         return `<div class="ranking-row"><span class="rank">${rank}</span><span>${escapeHtml(player.name)}</span><span>${player.games}</span><span>${player.assists ?? 0}</span><strong>${player.goals}</strong></div>`;
     }).join('') : empty('O ranking começa com os jogadores.<br>Cadastre os amigos e bora jogar!');
-    $('history-list').innerHTML = state.matches.length ? [...state.matches].reverse().map((item) => `<details class="history-card"><summary><span>${date(item.date)} · ${time(item.elapsed)}</span><strong>Azul ${score(item,'a')} × ${score(item,'b')} Vermelho</strong><span class="muted">Ver lances ↓</span></summary><div class="history-detail"><p><strong>${item.winner ? `Time ${item.winner === 'a' ? 'Azul' : 'Vermelho'} venceu` : score(item,'a') === score(item,'b') ? 'Empate' : `Time ${score(item,'a') > score(item,'b') ? 'Azul' : 'Vermelho'} venceu`}</strong> · ${item.reason === 'penalties' ? 'Decisão nos pênaltis' : Math.max(score(item,'a'),score(item,'b')) >= 2 ? '2 gols marcados' : item.elapsed >= item.duration * 60 ? 'Tempo encerrado' : 'Encerrada manualmente'}</p><p>Time Azul: ${(item.participants?.a ?? item.teams.a).map((id) => escapeHtml(playerName(id)) + (id === item.goalkeepers?.a ? ' (goleiro)' : '')).join(', ')}<br>Time Vermelho: ${(item.participants?.b ?? item.teams.b).map((id) => escapeHtml(playerName(id)) + (id === item.goalkeepers?.b ? ' (goleiro)' : '')).join(', ')}</p>${item.goals.length ? item.goals.map((goal) => `<div>⚽ ${time(goal.time)} · ${escapeHtml(playerName(goal.player))}${goal.assist ? ` · Passe de ${escapeHtml(playerName(goal.assist))}` : ''} · Time ${goal.team === 'a' ? 'Azul' : 'Vermelho'}</div>`).join('') : 'A rede não balançou: jogo sem gols.'}</div></details>`).join('') : empty('Toda resenha tem uma história.<br>As partidas finalizadas vão aparecer aqui.');
+    $('history-list').innerHTML = state.matches.length ? [...state.matches].reverse().map((item) => `<details class="history-card"><summary><span>${date(item.date)} · ${time(item.elapsed)}</span><strong>Azul ${score(item,'a')} × ${score(item,'b')} Vermelho</strong><span class="muted">Ver lances ↓</span></summary><div class="history-detail"><p><strong>${item.winner ? `Time ${item.winner === 'a' ? 'Azul' : 'Vermelho'} venceu` : score(item,'a') === score(item,'b') ? 'Empate' : `Time ${score(item,'a') > score(item,'b') ? 'Azul' : 'Vermelho'} venceu`}</strong> · ${item.reason === 'penalties' ? 'Decisão nos pênaltis' : !item.free && item.duration === 10 && Math.max(score(item,'a'),score(item,'b')) >= 2 ? '2 gols marcados' : !item.free && item.elapsed >= item.duration * 60 ? 'Tempo encerrado' : 'Encerrada manualmente'}</p><p>Time Azul: ${(item.participants?.a ?? item.teams.a).map((id) => escapeHtml(playerName(id)) + (id === item.goalkeepers?.a ? ' (goleiro)' : '')).join(', ')}<br>Time Vermelho: ${(item.participants?.b ?? item.teams.b).map((id) => escapeHtml(playerName(id)) + (id === item.goalkeepers?.b ? ' (goleiro)' : '')).join(', ')}</p>${item.goals.length ? item.goals.map((goal) => `<div>⚽ ${time(goal.time)} · ${escapeHtml(playerName(goal.player))}${goal.assist ? ` · Passe de ${escapeHtml(playerName(goal.assist))}` : ''} · Time ${goal.team === 'a' ? 'Azul' : 'Vermelho'}</div>`).join('') : 'A rede não balançou: jogo sem gols.'}</div></details>`).join('') : empty('Toda resenha tem uma história.<br>As partidas finalizadas vão aparecer aqui.');
     renderClock();
     if ($('goal-dialog').open) renderGoalPicker();
 }
@@ -233,12 +239,13 @@ function openTab(tab) {
     }
     document.querySelectorAll('.tab').forEach((element) => {element.hidden = element.id !== `tab-${tab}`;});
     document.querySelectorAll('.nav-item').forEach((element) => element.classList.toggle('active', element.dataset.tab === tab));
-    $('new-match').hidden = tab === 'profile';
+    $('new-match').hidden = tab !== 'match';
     $('page-title').textContent = tabs[tab][0];
     $('page-subtitle').textContent = tabs[tab][1];
     render();
 }
 document.addEventListener('click', async (event) => {
+    enableAlarm();
     const target = event.target.closest('button');
     if (!target) return;
     if (target.dataset.tab) openTab(target.dataset.tab);
@@ -268,15 +275,25 @@ document.addEventListener('click', async (event) => {
     if (target.dataset.returnPlayer) {
         if (await lifecycle(`/days/${target.dataset.returnDay ?? state.current?.dayId}/availability`, {player:target.dataset.returnPlayer,available:true})) notice('Jogador disponível novamente para este dia.');
     }
+    if (target.dataset.arrivalPlayer) {
+        if (await lifecycle(`/days/${selectedDayId}/arrival`, {player:target.dataset.arrivalPlayer,arrived:target.dataset.arrived === 'true'})) {
+            setupPlayers = cloneState(confirmedPlayers());
+            setupAssignments = setupPlayers.length >= 12 ? drawTeams(setupPlayers) : {};
+            setupGoalkeepers = {};
+            renderSetup();
+        }
+    }
     if (target.dataset.myPayment) await setMyPayment(target.dataset.myPayment);
     if (target.dataset.myAttendance) await setMyAttendance(target.dataset.myAttendance, target.dataset.present === 'true');
     if (target.dataset.paymentPlayer) await setPayment(target.dataset.paymentPlayer, target.dataset.paid === 'true');
     if (target.dataset.attendancePlayer) await setAttendance(target.dataset.attendancePlayer, target.dataset.present === 'true');
 });
 function renderSetup() {
+    renderArrivals();
+    $('create-match').disabled = busy || setupPlayers.length < 12;
     const groups = Object.fromEntries(['a','b','bank'].map((team) => [team,setupPlayers.filter((player) => (setupAssignments[player.id] ?? 'bank') === team)]));
     for (const team of ['a','b']) {
-        if (!groups[team].some((player) => player.id === setupGoalkeepers[team])) setupGoalkeepers[team] = groups[team].find((player) => player.position === 'goalkeeper')?.id ?? groups[team][0]?.id;
+        if (!groups[team].some((player) => player.id === setupGoalkeepers[team])) setupGoalkeepers[team] = groups[team].find((player) => player.position === 'goalkeeper')?.id ?? groups[team].find((player) => player.position === 'both')?.id ?? groups[team][0]?.id;
     }
     $('setup-counts').innerHTML = `<div class="setup-counts">${['a','b'].map((team) => `<span><b>Time ${team === 'a' ? 'Azul' : 'Vermelho'}</b>${Math.max(0,groups[team].length - (setupGoalkeepers[team] ? 1 : 0))}/5 na linha · ${setupGoalkeepers[team] ? '1' : '0'}/1 no gol</span>`).join('')}</div>`;
     $('setup-players').innerHTML = ['a','b','bank'].map((team) => {
@@ -323,10 +340,10 @@ async function openSetup() {
     try {
         await refreshDays();
         if (selectedDay()?.finished_at) {notice('Este dia já foi encerrado. Marque outro dia para jogar.'); return;}
-        if (state.matches.some((match) => match.dayId === selectedDayId)) {await lifecycle('/racha/next', {dayId:selectedDayId}); openTab('match'); return;}
+        if (state.matches.some((match) => match.dayId === selectedDayId)) {await lifecycle('/racha/next', {dayId:selectedDayId,duration:10}); openTab('match'); return;}
         if (!selectedDay()) {openTab('days'); notice('Marque ou escolha um dia de racha antes de criar a partida.'); return;}
         setupPlayers = cloneState(confirmedPlayers());
-        setupAssignments = drawTeams(setupPlayers); setupGoalkeepers = {};
+        setupAssignments = setupPlayers.length >= 12 ? drawTeams(setupPlayers) : {}; setupGoalkeepers = {};
         notice(''); renderSetup(); $('setup-dialog').showModal();
     } catch (error) {openTab('days'); notice(error.message);}
     finally {openingSetup = false;}
@@ -352,12 +369,12 @@ $('setup-form').addEventListener('submit', async (event) => {
         const dayId = selectedDayId;
         if (await mutate(() => {
             state.current = {id:uid(),date:new Date().toISOString(),duration:10,elapsed:0,startedAt:null,...lineup,dayId,goals:[]};
-        })) { $('setup-dialog').close(); openTab('match'); notice('Partida criada! Clique em Iniciar partida para começar os 10 minutos.'); }
+        })) { $('setup-dialog').close(); openTab('match'); notice('Partida criada! Clique em Iniciar partida para começar.'); }
     } catch(error) {notice(error.message);}
 });
-$('toggle-clock').addEventListener('click', () => mutate(() => {
-    if (state.current.startedAt) {state.current.elapsed = Math.min(86400, elapsed()); state.current.startedAt = null;} else {state.current.startedAt = Date.now();}
-}));
+$('toggle-clock').addEventListener('click', () => {enableAlarm(); return mutate(() => {
+    if (state.current.startedAt) {state.current.elapsed = elapsed(); state.current.startedAt = null;} else {state.current.startedAt = Date.now();}
+});});
 $('add-goal').addEventListener('click', () => {
     if (!state.current || busy) return;
     goalTeam = null; $('goal-player').value = ''; $('goal-assist').value = '';
@@ -389,20 +406,19 @@ $('goal-form').addEventListener('submit', async (event) => {
     const player = $('goal-player').value, assist = $('goal-assist').value || null;
     if (!goalTeam || !state.current.teams[goalTeam].includes(player) || (assist && (assist === player || !state.current.teams[goalTeam].includes(assist)))) {notice('Escolha o autor do gol e um passe de outro jogador do mesmo time.'); return;}
     if (state.current.status === 'penalties' || state.current.vacancies?.length || (!state.current.startedAt && !state.current.elapsed)) {notice('Inicie ou retome a partida antes de registrar o gol.'); return;}
-    if (elapsed() >= state.current.duration * 60) {await mutate(() => {}); return;}
-    if (await mutate(() => {state.current.goals.push({id:uid(),player,assist,team:goalTeam,time:Math.min(600, elapsed())});})) {$('goal-dialog').close(); if (state.current) notice('Gol registrado!');}
+    if (await mutate(() => {state.current.goals.push({id:uid(),player,assist,team:goalTeam,time:elapsed()});})) {$('goal-dialog').close(); if (state.current) notice('Gol registrado!');}
 });
 $('finish-match').addEventListener('click', () => $('confirm-dialog').showModal());
 $('confirm-finish').addEventListener('click', async () => {await lifecycle('/racha/finish');});
 $('open-penalties').addEventListener('click', () => $('penalties-dialog').showModal());
-$('prepare-next').addEventListener('click', async () => {if (await lifecycle('/racha/next',{dayId:selectedDayId})) openTab('match');});
+$('prepare-next').addEventListener('click', async () => {if (await lifecycle('/racha/next',{dayId:selectedDayId,duration:10})) openTab('match');});
 function renderNext() {
     const day = selectedDay();
     const last = day ? state.matches.filter((match) => match.dayId === day.id).at(-1) : null;
     const next = state.next?.dayId === day?.id ? state.next : null;
     $('next-match-card').hidden = Boolean(state.current) || !last || Boolean(day?.finished_at);
     $('last-result-title').textContent = last ? `Time ${(last.winner ?? (score(last,'a') > score(last,'b') ? 'a' : 'b')) === 'a' ? 'Azul' : 'Vermelho'} venceu${last.reason === 'penalties' ? ' nos pênaltis' : ''} · próxima partida` : 'Próxima partida';
-    $('rotation-info').textContent = next ? 'O vencedor permanece. O banco entra primeiro; as vagas restantes são sorteadas entre quem perdeu. Quem jogou menos tem prioridade, com sorteio nos empates.' : state.nextMessage ?? 'A próxima escalação será montada com os jogadores disponíveis.';
+    $('rotation-info').textContent = next ? state.nextMessage ?? 'O vencedor permanece. O banco entra primeiro; as vagas restantes são sorteadas entre quem perdeu. Quem jogou menos tem prioridade, com sorteio nos empates.' : state.nextMessage ?? 'A próxima escalação será montada com os jogadores disponíveis.';
     $('next-lineup').innerHTML = next ? ['a','b','bank'].map((team) => {
         const ids = team === 'bank' ? next.bench : next.teams[team];
         return `<div class="draw-group team-${team === 'a' ? 'blue' : team === 'b' ? 'red' : 'bank'}"><h3>${team === 'a' ? 'Time Azul' : team === 'b' ? 'Time Vermelho' : 'Banco'}</h3>${ids.map((id) => `<div class="draw-player">${escapeHtml(playerName(id))}${id === next.goalkeepers.a || id === next.goalkeepers.b ? '<small>Goleiro</small>' : ''}</div>`).join('') || '<p class="muted">Sem jogadores</p>'}</div>`;
@@ -431,14 +447,14 @@ function renderDayStatistics() {
 function renderDays() {
     const day = selectedDay();
     if (!$('share-url').hidden) {$('share-url').value = dayLink();}
+    renderArrivals();
     $('active-day-title').textContent = day ? `Racha · ${dayLabel(day)}` : 'Escolha o dia do racha';
     $('active-day-info').textContent = day ? `${day.location} · ${confirmedPlayers().length} presenças confirmadas` : 'Confirme as presenças antes de sortear os times.';
     $('days-list').innerHTML = days.length ? days.map((item) => `<button class="day-choice ${item.id === selectedDayId ? 'selected' : ''}" data-choose-day="${item.id}"><strong>${dayLabel(item)}</strong><small>${escapeHtml(item.location)} · ${item.attendees.length} confirmados</small></button>`).join('') : empty('Nenhum racha marcado.<br>Escolha a data, o horário e o local acima.');
     $('attendance-title').textContent = day ? `Presenças · ${date(`${day.date}T12:00:00`)}` : 'Lista de presença';
     renderDayStatistics();
-    $('finish-day').disabled = busy || !loaded || !day || Boolean(day.finished_at) || state.current?.dayId === day.id;
     $('finish-day-central').hidden = !day || Boolean(day.finished_at);
-    $('finish-day-central').disabled = $('finish-day').disabled;
+    $('finish-day-central').disabled = busy || !loaded || !day || Boolean(day.finished_at) || hasUnfinishedGame(day);
     $('edit-day').disabled = busy || !day || Boolean(day.finished_at);
     $('attendance-form').hidden = !day || Boolean(day.finished_at);
     $('attendance-details').innerHTML = day ? `<p class="day-attendance-summary">${escapeHtml(day.location)} · ${escapeHtml(dayLabel(day))}<br><strong>${day.attendees.filter((id) => state.players.find((player) => player.id === id)?.position !== 'goalkeeper').length}/15 jogadores de linha · ${day.attendees.filter((id) => state.players.find((player) => player.id === id)?.position === 'goalkeeper').length}/4 goleiros confirmados</strong></p>` : empty('Escolha um dia marcado para confirmar a presença.');
@@ -453,7 +469,7 @@ function renderDays() {
     $('attendance-player-label').textContent = profile ? 'Adicionar outro jogador cadastrado' : 'Adicionar jogador cadastrado';
     const identity = $('attendance-player').value;
     const candidates = state.players.filter((player) => player.id !== profile?.id && player.active !== false && !day?.attendees.includes(player.id));
-    $('attendance-player').innerHTML = '<option value="">Selecione um jogador</option>' + candidates.map((player) => `<option value="${player.id}">${escapeHtml(player.name)}${player.position === 'goalkeeper' ? ' · Goleiro' : ''}</option>`).join('');
+    $('attendance-player').innerHTML = '<option value="">Selecione um jogador</option>' + candidates.map((player) => `<option value="${player.id}">${escapeHtml(player.name)}${player.position === 'goalkeeper' ? ' · Goleiro' : player.position === 'both' ? ' · Linha e goleiro' : ''}</option>`).join('');
     $('attendance-player').value = candidates.some((player) => player.id === identity) ? identity : '';
     renderPaymentSummary();
     $('attendance-list').innerHTML = day ? state.players.filter((player) => day.attendees.includes(player.id)).map((player) => {
@@ -461,11 +477,10 @@ function renderDays() {
         const departed = day.departed?.includes(player.id);
         const paid = day.paid_players?.includes(player.id) ?? false;
         const locked = busy || Boolean(day.finished_at) || departed || (isPlaying(player.id) && state.current?.dayId === day.id);
-        return `<div class="attendance-row ${departed ? 'departed-player' : ''}"><div class="attendance-identity"><span class="attendance-avatar" aria-hidden="true">${escapeHtml(player.name.slice(0,2).toUpperCase())}</span><div><strong>${escapeHtml(player.name)}</strong><small>${departed ? 'Saiu do racha' : player.position === 'goalkeeper' ? 'Prefere jogar no gol' : 'Jogador de linha'}</small></div></div><button class="presence-button ${present && !departed ? 'presence-confirmed' : 'presence-unconfirmed'}" data-attendance-player="${player.id}" data-present="${!present}" ${locked ? 'disabled' : ''} aria-label="${present ? 'Cancelar' : 'Confirmar'} presença de ${escapeHtml(player.name)}">${departed ? 'Saiu do racha' : present ? 'Cancelar' : '＋ Confirmar'}</button>${player.position === 'goalkeeper' ? '<span class="payment-not-applicable">Isento</span>' : present || paid ? `<button class="payment-button ${paid ? 'payment-paid' : 'payment-pending'}" data-payment-player="${player.id}" data-paid="${!paid}" ${busy ? 'disabled' : ''} aria-label="${paid ? 'Desmarcar' : 'Marcar'} pagamento de ${escapeHtml(player.name)}">${paid ? '✓ Pago' : 'Marcar pago'}</button>` : '<span class="payment-not-applicable" aria-label="Confirme a presença antes de marcar o pagamento">—</span>'}</div>`;
+        return `<div class="attendance-row ${departed ? 'departed-player' : ''}"><div class="attendance-identity"><span class="attendance-avatar" aria-hidden="true">${escapeHtml(player.name.slice(0,2).toUpperCase())}</span><div><strong>${escapeHtml(player.name)}</strong><small>${departed ? 'Saiu do racha' : player.position === 'goalkeeper' ? 'Prefere jogar no gol' : player.position === 'both' ? 'Linha e goleiro' : 'Jogador de linha'}</small></div></div><button class="presence-button ${present && !departed ? 'presence-confirmed' : 'presence-unconfirmed'}" data-attendance-player="${player.id}" data-present="${!present}" ${locked ? 'disabled' : ''} aria-label="${present ? 'Cancelar' : 'Confirmar'} presença de ${escapeHtml(player.name)}">${departed ? 'Saiu do racha' : present ? 'Cancelar' : '＋ Confirmar'}</button>${player.position === 'goalkeeper' ? '<span class="payment-not-applicable">Isento</span>' : present || paid ? `<button class="payment-button ${paid ? 'payment-paid' : 'payment-pending'}" data-payment-player="${player.id}" data-paid="${!paid}" ${busy ? 'disabled' : ''} aria-label="${paid ? 'Desmarcar' : 'Marcar'} pagamento de ${escapeHtml(player.name)}">${paid ? '✓ Pago' : 'Marcar pago'}</button>` : '<span class="payment-not-applicable" aria-label="Confirme a presença antes de marcar o pagamento">—</span>'}</div>`;
     }).join('') || empty('Nenhum jogador inscrito. Confirme sua presença pelo perfil ou adicione um jogador acima.') : '';
     if (day && $('attendance-list').innerHTML.includes('attendance-row')) $('attendance-list').innerHTML = '<div class="attendance-table-heading"><span>JOGADOR</span><span>PRESENÇA</span><span>PAGAMENTO</span></div>' + $('attendance-list').innerHTML;
     $('share-day').disabled = !day || busy;
-    $('draw-day').disabled = !day || busy || Boolean(state.current) || Boolean(day.finished_at);
     $('confirm-attendance').disabled = busy || Boolean(day?.finished_at);
     $('cancel-attendance').disabled = busy || Boolean(day?.finished_at);
 }
@@ -531,7 +546,7 @@ function openSubstitution(playerId, vacancy = false) {
     const day = days.find((item) => item.id === departureDayId);
     if (!day || day.finished_at) {notice('Escolha um dia de racha ainda aberto.'); return;}
     const players = state.players.filter((player) => day.attendees.includes(player.id));
-    $('outgoing-player').innerHTML = players.map((player) => `<option value="${player.id}">${escapeHtml(player.name)}${player.position === 'goalkeeper' ? ' · Goleiro' : ''}</option>`).join('');
+    $('outgoing-player').innerHTML = players.map((player) => `<option value="${player.id}">${escapeHtml(player.name)}${player.position === 'goalkeeper' ? ' · Goleiro' : player.position === 'both' ? ' · Linha e goleiro' : ''}</option>`).join('');
     $('outgoing-player').value = playerId;
     $('depart-player').checked = !vacancy;
     updateReplacementOptions();
@@ -549,8 +564,9 @@ function updateReplacementOptions() {
     const stats = dailyStatistics(state,day);
     const ownTeam = match && match.teams.a.includes(outgoing) ? 'a' : vacancy?.team ?? 'b';
     const otherTeam = ownTeam === 'a' ? 'b' : 'a';
-    const eligible = state.players.filter((player) => (player.id !== outgoing || Boolean(vacancy)) && player.active !== false && day?.attendees.includes(player.id) && !day.departed?.includes(player.id) && !playing.includes(player.id) && !(match?.participants?.[otherTeam] ?? []).includes(player.id));
-    const preferred = eligible.filter((player) => player.position === 'goalkeeper');
+    const eligible = state.players.filter((player) => (player.id !== outgoing || Boolean(vacancy)) && player.active !== false && day?.attendees.includes(player.id) && (day.arrived_players ?? day.attendees).includes(player.id) && !day.departed?.includes(player.id) && !playing.includes(player.id) && !(match?.participants?.[otherTeam] ?? []).includes(player.id));
+    const keepers = eligible.filter((player) => player.position === 'goalkeeper');
+    const preferred = keepers.length ? keepers : eligible.filter((player) => player.position === 'both');
     const candidates = (position === 'goalkeeper' && preferred.length ? preferred : eligible).sort((a,b) => (stats.players.find((item) => item.id === a.id)?.games ?? 0) - (stats.players.find((item) => item.id === b.id)?.games ?? 0));
     $('incoming-player').disabled = !field;
     $('incoming-player').innerHTML = `<option value="">${field ? 'Sem substituto · pausar a partida' : 'Jogador fora de campo · retirar do dia'}</option>` + (field ? candidates.map((player) => `<option value="${player.id}">${escapeHtml(player.name)} · ${stats.players.find((item) => item.id === player.id)?.games ?? 0} partidas</option>`).join('') : '');
@@ -565,12 +581,15 @@ $('substitution-form').addEventListener('submit', async (event) => {
     const success = departing ? await lifecycle(`/days/${departureDayId}/availability`,{player:outgoing,available:false,replacement:incoming}) : await lifecycle('/racha/substitutions',{out:outgoing,in:incoming});
     if (success) {$('substitution-dialog').close(); notice(departing ? 'Saída registrada. O jogador mantém suas estatísticas e fica fora dos próximos sorteios deste dia.' : 'Substituição registrada. A participação dos dois jogadores fica no histórico.');}
 });
+function hasUnfinishedGame(day) {
+    const match = state.current;
+    return match?.dayId === day?.id && (match.startedAt !== null && match.startedAt !== undefined || match.elapsed > 0 || match.goals.length > 0 || match.status === 'penalties');
+}
 function openFinishDay() {
     const day = selectedDay();
-    if (busy || !loaded || !day || day.finished_at || state.current?.dayId === day.id) return;
+    if (busy || !loaded || !day || day.finished_at || hasUnfinishedGame(day)) return;
     notice(''); $('finish-day-dialog').showModal();
 }
-$('finish-day').addEventListener('click', openFinishDay);
 $('finish-day-central').addEventListener('click', openFinishDay);
 $('confirm-finish-day').addEventListener('click', async () => {
     if (await lifecycle(`/days/${selectedDayId}/finish`)) {$('finish-day-dialog').close(); openTab('days'); notice('Dia de racha encerrado! Confira o resumo final abaixo.');}
@@ -594,9 +613,7 @@ setInterval(async () => {
 $('today').textContent = new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long'});
 setInterval(() => {
     renderClock();
-    if (state.current && state.current.status !== 'penalties' && elapsed() >= state.current.duration * 60 && !busy && loaded && !conflicted && Date.now() >= retryAfter) {
-        mutate(() => {});
-    }
+
 }, 500);
 openTab('profile');
 render();
@@ -783,4 +800,52 @@ $('profile-notifications').addEventListener('click', async (event) => {
         openTab('days');
     } catch (error) {notice(error.message);}
     finally {busy = false; render();}
+});
+
+function renderArrivals() {
+    const day = selectedDay();
+    const participants = state.players.filter((player) => player.active !== false && day?.attendees.includes(player.id));
+    const pending = participants.filter((player) => !(day.arrived_players ?? day.attendees).includes(player.id) && !day.departed?.includes(player.id));
+    const html = pending.map((player) => `<button type="button" class="arrival-card" data-arrival-player="${player.id}" data-arrived="true" aria-label="Marcar chegada de ${escapeHtml(player.name)}" ${busy || day.finished_at ? 'disabled' : ''}><span class="attendance-avatar" aria-hidden="true">${escapeHtml(player.name.slice(0,2).toUpperCase())}</span><strong>${escapeHtml(player.name)}</strong><small>Marcar chegada</small></button>`).join('') || empty(participants.length ? 'Todos os participantes já chegaram ou saíram do racha.' : 'Inscreva os participantes no dia de racha.');
+    const session = Boolean(day && !day.finished_at && (day.date <= todayKey() || state.current?.dayId === day.id));
+    $('day-session').hidden = !session;
+    $('session-arrival-count').textContent = `${confirmedPlayers().length} presentes · ${day?.attendees.length ?? 0} inscritos`;
+    $('day-arrivals').innerHTML = session ? html : '';
+    $('draw-day').disabled = busy || !session || Boolean(state.current);
+    $('draw-day').textContent = state.matches.some((match) => match.dayId === day?.id) ? 'Preparar próxima partida' : 'Sortear times e preparar partida';
+    $('setup-arrivals').innerHTML = html;
+}
+
+let alarmAudio = null;
+const alarmedMatches = new Set();
+function enableAlarm() {
+    const Audio = globalThis.AudioContext ?? globalThis.webkitAudioContext;
+    if (!Audio) return;
+    alarmAudio ??= new Audio();
+    alarmAudio.resume().catch(() => {});
+}
+function soundTimeAlarm(match) {
+    if (alarmedMatches.has(match.id) || !alarmAudio || alarmAudio.state !== 'running') return;
+    alarmedMatches.add(match.id);
+    for (let index = 0; index < 3; index++) {
+        const tone = alarmAudio.createOscillator();
+        const volume = alarmAudio.createGain();
+        const start = alarmAudio.currentTime + index * .5;
+        tone.frequency.value = 880;
+        volume.gain.setValueAtTime(0,start);
+        volume.gain.linearRampToValueAtTime(.25,start+.02);
+        volume.gain.linearRampToValueAtTime(0,start+.35);
+        tone.connect(volume); volume.connect(alarmAudio.destination);
+        tone.start(start); tone.stop(start+.4);
+    }
+}
+$('free-match').addEventListener('click', async () => {
+    const match = state.current;
+    if (busy || !match || conflicted || match.startedAt || match.elapsed > 0 || match.goals.length || match.vacancies?.length || match.status === 'penalties') return;
+    enableAlarm();
+    await mutate(() => {
+        state.current.free = true;
+        state.current.elapsed = 0;
+        state.current.startedAt = Date.now();
+    });
 });

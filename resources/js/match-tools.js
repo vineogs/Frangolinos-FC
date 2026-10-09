@@ -10,6 +10,7 @@ export function drawTeams(players, random = Math.random) {
         return pool;
     };
     const preferred = shuffle(players.filter((player) => player.position === 'goalkeeper')).slice(0,2);
+    preferred.push(...shuffle(players.filter((player) => player.position === 'both')).slice(0,2-preferred.length));
     const others = shuffle(players.filter((player) => !preferred.includes(player)));
     const keepers = [...preferred, ...others.splice(0,2-preferred.length)];
     const assignments = Object.fromEntries(players.map((player) => [player.id,'bank']));
@@ -29,7 +30,7 @@ export function buildLineup(players, assignments, selectedGoalkeepers = {}) {
     }
     for (const team of ['a','b']) {
         if (teams[team].length !== 6) throw new Error('Cada time deve ter exatamente 5 jogadores de linha e 1 no gol. Ajuste a escalação ou sorteie novamente.');
-        const preferred = players.find((player) => teams[team].includes(player.id) && player.position === 'goalkeeper');
+        const preferred = players.find((player) => teams[team].includes(player.id) && player.position === 'goalkeeper') ?? players.find((player) => teams[team].includes(player.id) && player.position === 'both');
         goalkeepers[team] = teams[team].includes(selectedGoalkeepers[team]) ? selectedGoalkeepers[team] : preferred?.id ?? teams[team][0];
     }
     return {teams, bench, goalkeepers};

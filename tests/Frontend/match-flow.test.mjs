@@ -64,9 +64,9 @@ async function harness({rejectSave = false, rejectPlayer = false, responses = {}
     };
     const context = vm.createContext({document, matchMedia:()=>themeMedia, localStorage:{getItem:(key)=>storage[key] ?? null,setItem:(key,value)=>{storage[key]=value;}}, location:{search:`?day=${day.id}`,href:`http://10.0.8.203:8001/?day=${day.id}`}, navigator:{}, URL, URLSearchParams, Date, Math, Uint8Array, crypto:{getRandomValues:webcrypto.getRandomValues.bind(webcrypto)}, cloneState, drawTeams, buildLineup, remainingSeconds, dailyStatistics, setInterval(){}, setTimeout(callback,delay){const id=++timerId;timers.set(id,{callback,delay});return id;},clearTimeout(id){timers.delete(id);}, fetch:async (url, options = {}) => {
         requests.push({url,options});
+        if (responses[url]) return {ok:true,json:async()=>cloneState(typeof responses[url] === 'function' ? responses[url](options.body ? JSON.parse(options.body) : null,data) : responses[url])};
         if (url === '/days') return {ok:true,json:async()=>[day]};
         if (url === '/players' && rejectPlayer) return {ok:false,status:422,json:async()=>({errors:{name:['Este nome já está cadastrado.']}})};
-        if (responses[url]) return {ok:true,json:async()=>cloneState(typeof responses[url] === 'function' ? responses[url](options.body ? JSON.parse(options.body) : null,data) : responses[url])};
         if (url === '/profile/notifications') return {ok:true,json:async()=>[]};
         if (options.method === 'PUT') {
             if (rejectSave) return {ok:false,status:422,json:async()=>({errors:{data:['O jogador retirou sua presença.']}})};
@@ -390,6 +390,7 @@ test('the central can open day closure and blocks closing while a match is activ
     assert.equal(app.element('finish-day-dialog').open,true);
     app.element('finish-day-dialog').close();
     await app.click('new-match'); await app.submit('setup-form');
+    vm.runInContext('state.current.elapsed = 1; render();',app.context);
     assert.equal(app.element('finish-day-central').disabled,true);
     await app.click('finish-day-central');
     assert.equal(app.element('finish-day-dialog').open,false);
@@ -545,4 +546,112 @@ test('sharing a day includes the selected day and updates when another day is se
     assert.equal(app.element('share-url').value, 'http://10.0.8.203:8001/?day=another-day');
     await app.click('share-profile');
     assert.equal(app.element('profile-share-url').value, 'http://10.0.8.203:8001/');
+});
+
+
+test('setup marks arrivals before drawing and excludes participants who have not arrived', async () => {
+    const app = await harness();
+    vm.runInContext('days[0].arrived_players = [];', app.context);
+    await app.click('new-match');
+    assert.equal(app.element('setup-dialog').open,true);
+    assert.equal(app.element('create-match').disabled,true);
+    assert.match(app.element('setup-arrivals').innerHTML,/Marcar chegada/);
+    assert.equal(vm.runInContext('setupPlayers.length',app.context),0);
+    vm.runInContext('days[0].arrived_players = state.players.slice(0,12).map(player=>player.id); setupPlayers = cloneState(confirmedPlayers()); setupAssignments = drawTeams(setupPlayers); renderSetup();',app.context);
+    assert.equal(app.element('create-match').disabled,false);
+    assert.equal(vm.runInContext('setupPlayers.length',app.context),12);
+    assert.doesNotMatch(app.element('setup-players').innerHTML,/Jogador 13</);
+});
+
+
+test('draw prioritizes dedicated goalkeepers then dual position players before outfield players', () => {
+    for (const dedicated of [0,1,2]) {
+        const roster = players.map((player,index)=>({...player,position:index < dedicated ? 'goalkeeper' : index < dedicated + 2 ? 'both' : 'outfield'}));
+        const lineup = buildLineup(roster,drawTeams(roster,()=>0.5));
+        const keepers = Object.values(lineup.goalkeepers).map(id=>roster.find(player=>player.id===id));
+        assert.equal(keepers.filter(player=>player.position==='goalkeeper').length,dedicated);
+        assert.equal(keepers.filter(player=>player.position==='both').length,2-dedicated);
+    }
+});
+
+
+test('the central shows the day session only for today and counts arrivals separately from registrations', async () => {
+    const app = await harness();
+    vm.runInContext('days[0].date = todayKey(); days[0].arrived_players = [state.players[0].id]; openTab("match");',app.context);
+    assert.equal(app.element('day-session').hidden,false);
+    assert.match(app.element('day-arrivals').innerHTML,/Marcar chegada/);
+    assert.match(app.element('session-arrival-count').textContent,/1 presentes/);
+    assert.equal(app.element('stat-players').textContent,1);
+    vm.runInContext('days[0].date = "2099-01-01"; render();',app.context);
+    assert.equal(app.element('day-session').hidden,true);
+    assert.equal(app.element('day-arrivals').innerHTML,'');
+    const view = await readFile(new URL('../../resources/views/welcome.blade.php',import.meta.url),'utf8');
+    const dayTab = view.split('<section id="tab-days"')[1].split('<section id="tab-players"')[0];
+    assert.doesNotMatch(dayTab,/id="day-arrivals"|id="draw-day"|id="finish-day/);
+});
+
+
+test('arrival cards show only pending participants and disappear after arrival is saved', async () => {
+    const dayId = 'ef83f52e-9c39-4936-bd4b-fb360ea0b4f3';
+    const day = {id:dayId,date:new Date().toLocaleDateString('en-CA',{timeZone:'America/Fortaleza'}),time:'19:00',location:'Quadra',attendees:players.map(player=>player.id),arrived_players:[]};
+    const app = await harness({responses:{'/days':()=>[day],[`/days/${dayId}/arrival`]:(input,data)=>{day.arrived_players.push(input.player);return {data,revision:1};}}});
+    await app.trigger({tab:'match'});
+    assert.match(app.element('day-arrivals').innerHTML,/class="arrival-card"/);
+    assert.match(app.element('day-arrivals').innerHTML,/Jogador 1</);
+    await app.trigger({arrivalPlayer:players[0].id,arrived:'true'});
+    assert.doesNotMatch(app.element('day-arrivals').innerHTML,/Jogador 1</);
+    assert.match(app.element('day-arrivals').innerHTML,/Jogador 2</);
+    assert.doesNotMatch(app.element('setup-arrivals').innerHTML,/Jogador 1</);
+    const write = app.requests.find(request=>request.url===`/days/${dayId}/arrival`);
+    assert.equal(JSON.parse(write.options.body).arrived,true);
+    assert.match(app.element('session-arrival-count').textContent,/1 presentes/);
+});
+
+
+test('day closure is available for unstarted matches and sessions from previous days', async () => {
+    const app = await harness();
+    await app.click('new-match'); await app.submit('setup-form');
+    assert.equal(app.element('finish-day-central').disabled,false);
+    await app.click('finish-day-central');
+    assert.equal(app.element('finish-day-dialog').open,true);
+    app.element('finish-day-dialog').close();
+    vm.runInContext('state.current = null; days[0].date = "2026-01-01"; render();',app.context);
+    assert.equal(app.element('day-session').hidden,false);
+    assert.equal(app.element('finish-day-central').disabled,false);
+});
+
+
+test('the timer sounds once at zero and still allows a goal before the user finishes', async () => {
+    const app = await harness();
+    await app.click('new-match'); await app.submit('setup-form');
+    vm.runInContext(`globalThis.tones = 0; globalThis.AudioContext = class {constructor(){this.state='running';this.currentTime=0;this.destination={};} resume(){return Promise.resolve();} createOscillator(){return {frequency:{value:0},connect(){},start(){tones++;},stop(){}};} createGain(){return {gain:{setValueAtTime(){},linearRampToValueAtTime(){}},connect(){}};}}; enableAlarm(); state.current.elapsed = 601; render(); renderClock();`,app.context);
+    assert.equal(vm.runInContext('tones',app.context),3);
+    assert.equal(app.element('clock').textContent,'00:00');
+    assert.equal(app.element('add-goal').disabled,false);
+    assert.match(app.element('clock-caption').textContent,/finalize quando a bola sair/);
+    assert.ok(vm.runInContext('state.current',app.context));
+    const scorer = vm.runInContext('state.current.teams.a[0]',app.context);
+    await app.click('add-goal'); await app.trigger({goalTeam:'a'}); await app.trigger({goalScorer:scorer}); await app.submit('goal-form');
+    assert.equal(vm.runInContext('state.current.goals[0].time',app.context),601);
+});
+
+test('the free match button starts an unlimited count up timer', async () => {
+    const app = await harness();
+    await app.click('new-match'); await app.submit('setup-form');
+    await app.click('free-match');
+    assert.equal(vm.runInContext('state.current.free',app.context),true);
+    assert.ok(vm.runInContext('state.current.startedAt',app.context));
+    assert.equal(app.element('clock').textContent,'00:00');
+    vm.runInContext('state.current.startedAt = null; state.current.elapsed = 1205; render();',app.context);
+    assert.equal(app.element('clock').textContent,'20:05');
+    assert.equal(app.element('add-goal').disabled,false);
+});
+
+
+test('the present players card lists arrivals and excludes registered players still on the way', async () => {
+    const app = await harness();
+    vm.runInContext('days[0].arrived_players = [state.players[0].id]; render();',app.context);
+    assert.equal(app.element('present-players-count').textContent,1);
+    assert.match(app.element('present-players').innerHTML,/Jogador 1</);
+    assert.doesNotMatch(app.element('present-players').innerHTML,/Jogador 2</);
 });

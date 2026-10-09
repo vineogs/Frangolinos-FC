@@ -47,13 +47,14 @@ class MatchLifecycleController extends Controller
 
     public function next(Request $request): JsonResponse
     {
-        $input = $request->validate(['dayId' => ['required', 'uuid', 'exists:racha_days,id']]);
+        $input = $request->validate(['dayId' => ['required', 'uuid', 'exists:racha_days,id'], 'duration' => ['sometimes', 'integer', 'in:10,15']]);
 
         return $this->change($request, function (array $data) use ($input): array {
             if ($data['current'] !== null) {
                 throw ValidationException::withMessages(['match' => 'Finalize a partida atual, incluindo o desempate, antes de preparar outra.']);
             }
             $data['current'] = $this->games->nextLineup($data, RachaDay::findOrFail($input['dayId']), true);
+            $data['current']['duration'] = $input['duration'] ?? 10;
             $data['next'] = null;
             $data['nextMessage'] = null;
 
@@ -98,12 +99,42 @@ class MatchLifecycleController extends Controller
         });
     }
 
+    public function arrival(Request $request, RachaDay $day): JsonResponse
+    {
+        $input = $request->validate(['player' => ['required', 'uuid'], 'arrived' => ['required', 'boolean']]);
+
+        return $this->change($request, function (array $data) use ($day, $input): array {
+            $locked = RachaDay::whereKey($day->id)->lockForUpdate()->firstOrFail();
+            if ($locked->finished_at !== null || ! in_array($input['player'], $locked->attendees, true)) {
+                throw ValidationException::withMessages(['player' => 'Selecione um participante inscrito em um racha aberto.']);
+            }
+            $playing = ($data['current']['dayId'] ?? null) === $day->id ? array_merge($data['current']['teams']['a'], $data['current']['teams']['b']) : [];
+            if (! $input['arrived'] && in_array($input['player'], $playing, true)) {
+                throw ValidationException::withMessages(['player' => 'O jogador está em campo. Registre sua saída com uma substituição.']);
+            }
+            $arrived = array_values(array_diff($locked->arrived_players ?? $locked->attendees, [$input['player']]));
+            if ($input['arrived']) {
+                $arrived[] = $input['player'];
+            }
+            $locked->update(['arrived_players' => $arrived]);
+            if (($data['current']['dayId'] ?? null) === $day->id) {
+                $data['current']['bench'] = array_values(array_diff(array_column($this->games->available($data, $locked), 'id'), $playing));
+            }
+
+            return $this->games->refreshNext($data, $locked);
+        });
+    }
+
     public function closeDay(Request $request, RachaDay $day): JsonResponse
     {
         return $this->change($request, function (array $data) use ($day): array {
             $locked = RachaDay::whereKey($day->id)->lockForUpdate()->firstOrFail();
             if (($data['current']['dayId'] ?? null) === $day->id) {
-                throw ValidationException::withMessages(['match' => 'Finalize a partida e resolva os pênaltis antes de encerrar o dia.']);
+                $match = $data['current'];
+                if ($match['startedAt'] !== null || $match['elapsed'] > 0 || $match['goals'] !== [] || ($match['status'] ?? 'regular') === 'penalties') {
+                    throw ValidationException::withMessages(['match' => 'Finalize a partida e resolva os pênaltis antes de encerrar o dia.']);
+                }
+                $data['current'] = null;
             }
             if ($locked->finished_at === null) {
                 $locked->update(['finished_at' => now(), 'statistics' => $this->games->statistics($data, $locked)]);

@@ -23,17 +23,18 @@ class SaveRachaRequest extends FormRequest
             'data.players.*' => ['array:id,name,position,active'],
             'data.players.*.id' => ['required', 'uuid', 'distinct'],
             'data.players.*.name' => ['required', 'string', 'max:60'],
-            'data.players.*.position' => ['sometimes', 'in:outfield,goalkeeper'],
+            'data.players.*.position' => ['sometimes', 'in:outfield,goalkeeper,both'],
             'data.players.*.active' => ['sometimes', 'boolean'],
             'data.next' => ['sometimes', 'nullable', 'array'],
             'data.nextMessage' => ['sometimes', 'nullable', 'string'],
             'data.matches' => ['present', 'array', 'max:2000'],
-            'data.current' => ['present', 'nullable', 'array:id,date,duration,elapsed,startedAt,teams,goals,goalkeepers,dayId,bench,status,winner,reason,participants,substitutions,vacancies'],
-            'data.matches.*' => ['array:id,date,duration,elapsed,startedAt,teams,goals,goalkeepers,dayId,bench,status,winner,reason,participants,substitutions,vacancies'],
+            'data.current' => ['present', 'nullable', 'array:id,date,duration,elapsed,startedAt,teams,goals,goalkeepers,dayId,bench,status,winner,reason,participants,substitutions,vacancies,free'],
+            'data.matches.*' => ['array:id,date,duration,elapsed,startedAt,teams,goals,goalkeepers,dayId,bench,status,winner,reason,participants,substitutions,vacancies,free'],
         ];
         foreach (['data.current', 'data.matches.*'] as $prefix) {
             $required = $prefix === 'data.current' ? 'required_with:data.current' : 'required';
             $rules[$prefix.'.id'] = [$required, 'uuid'];
+            $rules[$prefix.'.free'] = ['sometimes', 'boolean'];
             $rules[$prefix.'.status'] = ['sometimes', 'in:regular,penalties,finished'];
             $rules[$prefix.'.winner'] = ['sometimes', 'nullable', 'in:a,b'];
             $rules[$prefix.'.reason'] = ['sometimes', 'in:goals,time,manual,penalties'];
@@ -51,7 +52,7 @@ class SaveRachaRequest extends FormRequest
             $rules[$prefix.'.substitutions.*.out'] = ['required', 'uuid'];
             $rules[$prefix.'.substitutions.*.in'] = ['present', 'nullable', 'uuid'];
             $rules[$prefix.'.substitutions.*.team'] = ['required', 'in:a,b'];
-            $rules[$prefix.'.substitutions.*.time'] = ['required', 'numeric', 'min:0', 'max:600'];
+            $rules[$prefix.'.substitutions.*.time'] = ['required', 'numeric', 'min:0', 'max:86400'];
             $rules[$prefix.'.substitutions.*.position'] = ['sometimes', 'in:outfield,goalkeeper'];
             $rules[$prefix.'.substitutions.*.departed'] = ['required', 'boolean'];
             $rules[$prefix.'.dayId'] = ['sometimes', 'nullable', 'uuid', 'exists:racha_days,id'];
@@ -103,8 +104,8 @@ class SaveRachaRequest extends FormRequest
                 $isCurrent = $match['id'] === ($this->input('data.current.id'));
                 $isLegacy = $match['id'] === ($stored['current']['id'] ?? null) && ! isset($stored['current']['goalkeepers']);
                 if (isset($match['goalkeepers']) || ($isCurrent && ! $isLegacy)) {
-                    if ($match['duration'] !== 10) {
-                        $validator->errors()->add('data.current.duration', 'A partida deve durar 10 minutos.');
+                    if (! in_array($match['duration'], [10, 15], true)) {
+                        $validator->errors()->add('data.current.duration', 'Escolha uma partida de 10 ou 15 minutos.');
                     }
                     foreach (['a', 'b'] as $team) {
                         $goalkeeper = $match['goalkeepers'][$team] ?? null;
@@ -120,15 +121,11 @@ class SaveRachaRequest extends FormRequest
                         }
                     }
                     foreach (['a', 'b'] as $team) {
-                        if (count(array_filter($match['goals'], fn (array $goal): bool => $goal['team'] === $team)) > 2) {
+                        if (! ($match['free'] ?? false) && $match['duration'] === 10 && count(array_filter($match['goals'], fn (array $goal): bool => $goal['team'] === $team)) > 2) {
                             $validator->errors()->add('data', 'A partida termina quando um time faz 2 gols.');
                         }
                     }
-                    foreach ($match['goals'] as $goal) {
-                        if ($goal['time'] > 600) {
-                            $validator->errors()->add('data', 'Os gols devem ocorrer nos 10 minutos de partida.');
-                        }
-                    }
+
                 }
                 $participants = array_merge($match['teams']['a'], $match['teams']['b']);
                 $bench = $match['bench'] ?? [];
@@ -137,8 +134,8 @@ class SaveRachaRequest extends FormRequest
                 }
                 if ($isCurrent && $match['id'] !== ($stored['current']['id'] ?? null) && isset($match['dayId'])) {
                     $day = RachaDay::find($match['dayId']);
-                    if ($day->finished_at !== null || array_diff(array_merge($participants, $bench), array_diff($day->attendees, $day->departed ?? []))) {
-                        $validator->errors()->add('data', 'Só jogadores com presença confirmada podem entrar no sorteio.');
+                    if ($day->finished_at !== null || array_diff(array_merge($participants, $bench), array_diff(array_intersect($day->attendees, $day->arrived_players ?? $day->attendees), $day->departed ?? []))) {
+                        $validator->errors()->add('data', 'Só jogadores inscritos que já chegaram podem entrar no sorteio.');
                     }
                     $active = collect($this->input('data.players'))->filter(fn (array $player): bool => ($player['active'] ?? true) !== false)->pluck('id')->all();
                     if (array_diff(array_merge($participants, $bench), $active)) {

@@ -26,7 +26,7 @@ class RachaDayController extends Controller
         $data = $this->scheduleData($request);
 
         $day = DB::transaction(function () use ($data): RachaDay {
-            $day = RachaDay::create([...$data, 'attendees' => []]);
+            $day = RachaDay::create([...$data, 'attendees' => [], 'arrived_players' => []]);
             $this->notifyProfiles($day);
 
             return $day;

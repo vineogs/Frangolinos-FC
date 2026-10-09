@@ -141,21 +141,21 @@ test('three goals for one team return 422', function () {
     $this->putJson('/racha', ['revision' => 0, 'data' => $data])->assertUnprocessable()->assertJsonValidationErrors('data');
 });
 
-test('the match is archived at ten minutes even if the page was closed', function () {
+test('the expired match remains open when the page is reloaded', function () {
     $this->freezeTime();
     $data = rachaFixture();
     $data['current']['elapsed'] = 0;
     $data['current']['startedAt'] = now()->getTimestampMs();
     $this->putJson('/racha', ['revision' => 0, 'data' => $data])->assertOk();
     $this->travel(11)->minutes();
-    $this->getJson('/racha')->assertOk()->assertJsonPath('data.current', null)->assertJsonPath('data.matches.0.elapsed', 600)->assertJsonPath('data.matches.0.startedAt', null)->assertJsonPath('revision', 2);
-    $this->getJson('/racha')->assertJsonCount(1, 'data.matches')->assertJsonPath('revision', 2);
+    $this->getJson('/racha')->assertOk()->assertJsonCount(0, 'data.matches')->assertJsonPath('data.current.id', $data['current']['id'])->assertJsonPath('revision', 1);
+    $this->postJson('/racha/finish', ['revision' => 1])->assertOk()->assertJsonPath('data.matches.0.elapsed', 660);
 });
 
-test('a goal beyond ten minutes returns 422', function () {
+test('a goal after the alarm is accepted while the ball is in play', function () {
     $data = rachaFixture();
     $data['current']['goals'][0]['time'] = 601;
-    $this->putJson('/racha', ['revision' => 0, 'data' => $data])->assertUnprocessable()->assertJsonValidationErrors('data');
+    $this->putJson('/racha', ['revision' => 0, 'data' => $data])->assertOk()->assertJsonPath('data.current.goals.0.time', 601);
 });
 
 test('legacy historical matches remain available without goalkeeper metadata', function () {
@@ -185,11 +185,12 @@ test('a second goal by the red team also archives the match', function () {
     $this->putJson('/racha', ['revision' => 0, 'data' => $data])->assertOk()->assertJsonPath('data.current', null)->assertJsonCount(2, 'data.matches.0.goals');
 });
 
-test('a scoreless match waits for penalties at exactly ten minutes', function () {
+test('a scoreless match waits for the user to finish before penalties', function () {
     $data = rachaFixture();
     $data['current']['goals'] = [];
     $data['current']['elapsed'] = 600;
-    $this->putJson('/racha', ['revision' => 0, 'data' => $data])->assertOk()->assertJsonPath('data.current.status', 'penalties')->assertJsonPath('data.current.elapsed', 600)->assertJsonCount(0, 'data.matches');
+    $this->putJson('/racha', ['revision' => 0, 'data' => $data])->assertOk()->assertJsonPath('data.current.elapsed', 600)->assertJsonCount(0, 'data.matches');
+    $this->postJson('/racha/finish', ['revision' => 1])->assertOk()->assertJsonPath('data.current.status', 'penalties');
 });
 
 test('a newly drawn match can be created without goals or elapsed time', function () {

@@ -120,3 +120,9 @@ test('declining a racha persists only for that player and confirming again clear
     $this->putJson('/profile/days/'.$day->id.'/attendance', ['present' => true])->assertOk()->assertJsonPath('declined_players', []);
     expect($day->fresh()->attendees)->toContain($one['id'], $two['id']);
 });
+
+test('a player can register and edit a profile that plays both positions', function () {
+    $result = $this->postJson('/players', ['name' => 'Versátil', 'position' => 'both'])->assertCreated()->assertJsonPath('player.position', 'both')->json();
+    $this->assertDatabaseHas('players', ['id' => $result['player']['id'], 'position' => 'both']);
+    $this->putJson('/racha', ['revision' => $result['revision'], 'data' => $result['data']])->assertOk()->assertJsonPath('data.players.0.position', 'both');
+});

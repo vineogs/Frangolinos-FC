@@ -13,7 +13,7 @@ class PlayerController extends Controller
 {
     public function store(Request $request, RachaStateStore $states): JsonResponse
     {
-        $input = $request->validate(['name' => ['required', 'string', 'max:60'], 'position' => ['required', 'in:outfield,goalkeeper']]);
+        $input = $request->validate(['name' => ['required', 'string', 'max:60'], 'position' => ['required', 'in:outfield,goalkeeper,both']]);
         $states->ensure();
 
         return DB::transaction(function () use ($input, $states): JsonResponse {

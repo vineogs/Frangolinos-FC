@@ -42,7 +42,8 @@ test('a tied match waits for penalties and cannot start another match until a wi
     $data['current']['goals'] = [];
     $data['current']['elapsed'] = 600;
     storeLifecycleState($data);
-    $this->getJson('/racha')->assertOk()->assertJsonPath('data.current.status', 'penalties')->assertJsonCount(0, 'data.matches')->assertJsonPath('revision', 1);
+    $this->getJson('/racha')->assertOk()->assertJsonCount(0, 'data.matches');
+    $this->postJson('/racha/finish', ['revision' => 0])->assertOk()->assertJsonPath('data.current.status', 'penalties');
     $this->postJson('/racha/next', ['revision' => 1, 'dayId' => $day->id])->assertUnprocessable();
     $result = $this->postJson('/racha/penalties', ['revision' => 1, 'winner' => 'b'])->assertOk()->assertJsonPath('data.current', null)->assertJsonPath('data.matches.0.winner', 'b')->assertJsonPath('data.matches.0.reason', 'penalties')->assertJsonCount(0, 'data.matches.0.goals');
     expect($result->json('data.next.teams.b'))->toBe($data['current']['teams']['b']);
@@ -53,11 +54,12 @@ test('penalties cannot override a regular winner', function () {
     $this->postJson('/racha/penalties', ['revision' => 0, 'winner' => 'b'])->assertUnprocessable()->assertJsonValidationErrors('winner');
 });
 
-test('the team with more goals wins automatically at the end of the time', function () {
+test('the expired timer stays open until the user finishes', function () {
     [$data] = lifecycleFixture();
     $data['current']['elapsed'] = 600;
     storeLifecycleState($data);
-    $this->getJson('/racha')->assertOk()->assertJsonPath('data.current', null)->assertJsonPath('data.matches.0.winner', 'a')->assertJsonPath('data.matches.0.reason', 'time');
+    $this->getJson('/racha')->assertOk()->assertJsonCount(0, 'data.matches')->assertJsonPath('data.current.elapsed', 600);
+    $this->postJson('/racha/finish', ['revision' => 0])->assertOk()->assertJsonPath('data.current', null)->assertJsonPath('data.matches.0.winner', 'a')->assertJsonPath('data.matches.0.reason', 'time');
 });
 
 test('the losing team supplies only the missing slots when the bench is too small', function () {
@@ -152,7 +154,7 @@ test('closing a day creates a final summary across all its games and excludes pe
     $next = $prepared->json('data');
     $next['current']['elapsed'] = 600;
     storeLifecycleState($next, 2);
-    $this->getJson('/racha')->assertJsonPath('data.current.status', 'penalties');
+    $this->postJson('/racha/finish', ['revision' => 2])->assertJsonPath('data.current.status', 'penalties');
     $this->postJson('/racha/penalties', ['revision' => 3, 'winner' => 'b'])->assertOk();
     $this->postJson('/days/'.$day->id.'/finish', ['revision' => 4])->assertOk()->assertJsonPath('data.next', null);
     expect($day->fresh()->finished_at)->not->toBeNull();
@@ -278,4 +280,50 @@ test('a selected outfield goalkeeper stays in goal after losing and can be repla
     $response = $this->postJson('/racha/finish', ['revision' => 0])->assertOk();
     expect($response->json('data.next.goalkeepers.b'))->toBe($data['players'][8]['id']);
     expect($response->json('data.next.teams.b'))->toContain($data['players'][8]['id']);
+});
+
+test('closing a day discards an unstarted prepared match without recording a game', function () {
+    [$data, $day] = lifecycleFixture();
+    $data['current']['elapsed'] = 0;
+    $data['current']['goals'] = [];
+    storeLifecycleState($data);
+    $this->postJson('/days/'.$day->id.'/finish', ['revision' => 0])->assertOk()->assertJsonPath('data.current', null)->assertJsonCount(0, 'data.matches');
+    expect($day->fresh()->finished_at)->not->toBeNull();
+    expect($day->fresh()->statistics['matches'])->toBe(0);
+});
+
+test('a fifteen minute match accepts more than two goals and overtime until manually finished', function () {
+    [$data, $day] = lifecycleFixture();
+    $data['current']['duration'] = 15;
+    $data['current']['elapsed'] = 905;
+    $goal = $data['current']['goals'][0];
+    for ($index = 0; $index < 3; $index++) {
+        $goal['id'] = sprintf('a3000000-0000-4000-8000-%012d', $index + 10);
+        $goal['time'] = 901 + $index;
+        $data['current']['goals'][] = $goal;
+    }
+    $this->putJson('/racha', ['revision' => 0, 'data' => $data])->assertOk()->assertJsonCount(4, 'data.current.goals')->assertJsonCount(0, 'data.matches');
+    $this->getJson('/racha')->assertJsonCount(0, 'data.matches');
+    $this->postJson('/racha/finish', ['revision' => 1])->assertOk()->assertJsonPath('data.current', null)->assertJsonPath('data.matches.0.reason', 'time')->assertJsonCount(4, 'data.matches.0.goals');
+});
+
+test('the next match can use fifteen minutes without a goal limit', function () {
+    [$data, $day] = lifecycleFixture();
+    $this->postJson('/racha/finish', ['revision' => 0])->assertOk();
+    $this->postJson('/racha/next', ['revision' => 1, 'dayId' => $day->id, 'duration' => 15])->assertOk()->assertJsonPath('data.current.duration', 15);
+});
+
+test('a free match has no time or goal limit and finishes manually', function () {
+    [$data] = lifecycleFixture();
+    $data['current']['free'] = true;
+    $data['current']['elapsed'] = 1800;
+    $goal = $data['current']['goals'][0];
+    for ($index = 0; $index < 3; $index++) {
+        $goal['id'] = sprintf('a3000000-0000-4000-8000-%012d', $index + 100);
+        $goal['time'] = 1700 + $index;
+        $data['current']['goals'][] = $goal;
+    }
+    $this->putJson('/racha', ['revision' => 0, 'data' => $data])->assertOk()->assertJsonCount(4, 'data.current.goals')->assertJsonPath('data.current.free', true);
+    $this->getJson('/racha')->assertJsonCount(0, 'data.matches');
+    $this->postJson('/racha/finish', ['revision' => 1])->assertOk()->assertJsonPath('data.matches.0.reason', 'manual');
 });

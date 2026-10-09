@@ -345,3 +345,19 @@ dialog { background: var(--surface); max-height: min(85vh, 85dvh); overscroll-be
 @media (max-width: 1000px) { .general-rankings { grid-template-columns: 1fr; } }
 
 .assist-icon { width: 14px; height: 14px; vertical-align: -2px; display: inline-block; }
+
+
+#day-session { margin-bottom: 24px; }
+.right-column > .panel + .panel { margin-top: 20px; }
+.arrival-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin: 18px 0; }
+.arrival-card { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; min-height: 132px; padding: 18px 12px; background: var(--surface-soft); color: var(--text); border: 1px solid var(--border); border-radius: 12px; text-align: center; }
+.arrival-card strong { font-size: 14px; overflow-wrap: anywhere; }
+.arrival-card small { color: var(--muted); font-size: 11px; }
+.arrival-card:hover:not(:disabled), .arrival-card:focus-visible { border-color: var(--accent-text); }
+.arrival-card:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 3px; }
+.arrival-card:disabled { opacity: .55; cursor: wait; }
+.arrival-grid > .empty { grid-column: 1 / -1; }
+
+.free-match-option { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 12px; color: var(--text); font-size: 12px; cursor: pointer; white-space: nowrap; }
+.free-match-option input { width: 18px; height: 18px; margin: 0; }
+.match-actions { flex-wrap: wrap; }
