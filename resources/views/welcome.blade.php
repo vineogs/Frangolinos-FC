@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <meta name="color-scheme" content="light dark">
     <script>
@@ -31,7 +31,7 @@
         <div class="sidebar-bottom"><div class="club-icon">F</div><div>Racha dos amigos<small>A resenha começa em campo.</small></div></div>
     </aside>
     <main>
-        <header class="topbar"><span>O nosso racha. A nossa história.</span><div class="topbar-actions"><span id="today"></span><button type="button" id="theme-toggle" class="theme-toggle" aria-label="Ativar modo escuro" aria-pressed="false"><span id="theme-icon" aria-hidden="true">☾</span><span id="theme-label">Modo escuro</span></button></div></header>
+        <header class="topbar"><span>O nosso racha. A nossa história.</span><div class="topbar-actions"><span id="today"></span><button type="button" id="open-guide" class="secondary">Guia</button><button type="button" id="theme-toggle" class="theme-toggle" aria-label="Ativar modo escuro" aria-pressed="false"><span id="theme-icon" aria-hidden="true">☾</span><span id="theme-label">Modo escuro</span></button></div></header>
         <div class="content">
             <div class="page-heading"><div><div class="eyebrow">BORA PRO JOGO</div><h1 id="page-title">Meu perfil</h1><p id="page-subtitle">Sua presença e seus números, em um só lugar.</p></div><button class="primary" id="new-match" hidden>＋ Nova partida</button></div>
             <div id="notice" class="notice-toast" hidden><span class="notice-icon" aria-hidden="true">i</span><div class="notice-body"><strong>Frangolinos</strong><span id="notice-message" role="status" aria-live="polite" aria-atomic="true"></span></div><button type="button" id="dismiss-notice" class="notice-close" aria-label="Fechar notificação">×</button></div>
@@ -43,7 +43,7 @@
                 <article class="panel" id="day-session" hidden><div class="panel-heading"><h2>Sessão do dia</h2><span class="tag" id="session-arrival-count"></span></div><p class="muted">Marque quem já chegou ao local. Apenas os presentes entram no sorteio; os demais podem ser adicionados conforme chegarem.</p><div id="day-arrivals" class="arrival-grid"></div><div class="day-controls"><button type="button" class="primary" id="draw-day">Sortear times e preparar partida</button><button type="button" class="secondary" id="finish-day-central">Encerrar dia de racha</button></div></article>
                 <div class="stats-grid"><article class="stat"><span>Jogadores do dia <i>♧</i></span><strong id="stat-players">0</strong><small>Presenças confirmadas neste dia</small></article><article class="stat"><span>Partidas finalizadas <i>⚑</i></span><strong id="stat-matches">0</strong><small>Finalizadas neste dia</small></article><article class="stat"><span>Gols marcados <i>◎</i></span><strong id="stat-goals">0</strong><small>Gols do dia, incluindo a partida atual</small></article><article class="stat"><span>Artilheiro do dia <i>♜</i></span><strong class="name-stat" id="stat-leader">—</strong><small id="stat-leader-goals">O primeiro gol pode ser seu</small></article></div>
                 <article id="penalties-card" class="panel penalties-card" hidden><h2>Empate · decisão nos pênaltis</h2><p>A partida terminou empatada. Escolha quem venceu a disputa para registrar o resultado e liberar a próxima partida.</p><button class="primary" id="open-penalties">Definir vencedor</button></article>
-                <article id="next-match-card" tabindex="-1" class="panel next-match-card" hidden><div class="panel-heading"><h2 id="last-result-title">Próxima partida</h2><span class="tag">VENCEDOR FICA</span></div><p id="rotation-info" class="muted"></p><div id="next-lineup" class="draw-board"></div><div class="day-controls"><button class="primary" id="prepare-next">Preparar próxima partida</button><button class="secondary" data-tab="days">Ver estatísticas do dia</button></div></article>
+                <article id="next-match-card" tabindex="-1" class="panel next-match-card" hidden><div class="panel-heading"><h2 id="last-result-title">Próxima partida</h2><span class="tag">VENCEDOR FICA · LIMITE DE 3</span></div><p id="rotation-info" class="muted"></p><div id="next-lineup" class="draw-board"></div><div class="day-controls"><button class="primary" id="prepare-next">Preparar próxima partida</button><button class="secondary" data-tab="days">Ver estatísticas do dia</button></div></article>
                 <div class="match-layout"><div>
                     <article class="score-card"><div class="score-top"><span class="live-pill" id="match-status">● AGUARDANDO O APITO</span><span id="match-number">PARTIDA DO RACHA</span></div>
                         <div class="scoreboard"><div class="team"><div class="jersey blue">A</div><h2>Time Azul</h2><span id="team-a-count">0 jogadores</span></div><div class="score"><span id="score-a">0</span><em>:</em><span id="score-b">0</span></div><div class="team"><div class="jersey red">B</div><h2>Time Vermelho</h2><span id="team-b-count">0 jogadores</span></div></div>
@@ -74,6 +74,31 @@
             <footer class="page-footer"><span>frangolinos <b>·</b> Feito para o nosso futebol.</span><span>Dentro de campo, rivais. Fora dele, amigos.</span></footer>
         </div>
     </main>
+    <nav class="mobile-navigation" aria-label="Navegação mobile">
+        <button type="button" class="mobile-nav-item" data-tab="profile"><span aria-hidden="true">☺</span><span>Perfil</span></button>
+        <button type="button" class="mobile-nav-item" data-tab="days"><span aria-hidden="true">▦</span><span>Dias</span></button>
+        <button type="button" class="mobile-nav-item" data-tab="match"><span aria-hidden="true">◉</span><span>Partida</span></button>
+        <button type="button" class="mobile-nav-item" data-tab="statistics"><span aria-hidden="true">▥</span><span>Números</span></button>
+        <button type="button" class="mobile-nav-item" id="open-more" aria-haspopup="dialog"><span aria-hidden="true">•••</span><span>Mais</span></button>
+    </nav>
+    <dialog id="more-dialog" class="mobile-more-dialog" aria-labelledby="more-title">
+        <div class="dialog-heading"><h2 id="more-title">Mais do racha</h2><button type="button" class="icon-button" data-close="more-dialog" aria-label="Fechar menu">×</button></div>
+        <div class="more-links">
+            <button type="button" class="secondary" data-tab="players">♧ Jogadores</button>
+            <button type="button" class="secondary" data-tab="ranking">♜ Artilharia</button>
+            <button type="button" class="secondary" data-tab="history">◷ Histórico</button>
+            <button type="button" class="secondary" id="more-guide">? Guia do sistema</button>
+        </div>
+    </dialog>
+    <dialog id="guide-dialog" class="guide-dialog" aria-labelledby="guide-title" aria-describedby="guide-description">
+        <div class="dialog-heading"><span class="eyebrow">BEM-VINDO AO FRANGOLINOS</span><button type="button" class="icon-button" id="skip-guide" aria-label="Pular guia">×</button></div>
+        <div id="guide-icon" class="guide-icon" aria-hidden="true"></div>
+        <p id="guide-progress" class="muted" aria-live="polite"></p>
+        <h2 id="guide-title"></h2><p id="guide-description"></p>
+        <div id="guide-dots" class="guide-dots" aria-hidden="true"></div>
+        <div class="dialog-actions"><button type="button" class="secondary" id="guide-back">Voltar</button><button type="button" class="primary" id="guide-next">Próximo</button></div>
+        <button type="button" class="text-button guide-skip" id="guide-later">Pular guia</button>
+    </dialog>
     <dialog id="setup-dialog" class="wide-dialog"><form id="setup-form"><div class="dialog-heading"><div><div class="eyebrow">PREPARA A RESENHA</div><h2>Nova partida</h2></div><button type="button" class="icon-button" data-close="setup-dialog" aria-label="Fechar">×</button></div><p class="muted">Apenas os presentes entram no sorteio. São dois times: azul e vermelho. Cada time tem 5 na linha e 1 no gol, com prioridade para os goleiros cadastrados. Os demais ficam no banco.</p><div class="match-rules"><strong>10 minutos · 2 gols para vencer</strong><span>No formato de 10 minutos, o segundo gol encerra a partida. Ao zerar o cronômetro, o alarme toca: finalize quando a bola sair. O formato de 15 minutos não tem limite de gols.</span></div><h3>Quem já chegou?</h3><p class="muted">Marque pelo menos 12 participantes para sortear. Os demais podem ser adicionados ao chegar.</p><div id="setup-arrivals" class="arrival-grid"></div><div id="setup-counts" aria-live="polite"></div><div id="setup-players" class="draw-board"></div><p class="dialog-notice" role="alert" hidden></p><div class="dialog-actions"><button type="button" class="secondary" id="balance-teams">⇄ Sortear times</button><button class="primary" id="create-match">Criar partida</button></div></form></dialog>
     <dialog id="edit-player-dialog"><form id="edit-player-form"><div class="dialog-heading"><h2>Editar jogador</h2><button type="button" class="icon-button" data-close="edit-player-dialog" aria-label="Fechar">×</button></div><label class="field-label" for="edit-player-name">Nome ou apelido</label><input id="edit-player-name" maxlength="60" required><label class="field-label" for="edit-player-position">Posição</label><select id="edit-player-position"><option value="outfield">Jogador de linha</option><option value="goalkeeper">Goleiro</option><option value="both">Linha e goleiro</option></select><p class="dialog-notice" role="alert" hidden></p><div class="dialog-actions"><button class="primary">Salvar jogador</button></div></form></dialog>
     <dialog id="penalties-dialog"><div class="dialog-heading"><h2>Quem venceu nos pênaltis?</h2><button type="button" class="icon-button" data-close="penalties-dialog" aria-label="Fechar">×</button></div><p class="muted">O placar do jogo fica preservado. As cobranças de desempate não entram na artilharia.</p><div class="penalty-options"><button class="team-winner blue-winner" data-penalty-winner="a">Time Azul venceu</button><button class="team-winner red-winner" data-penalty-winner="b">Time Vermelho venceu</button></div><p class="dialog-notice" role="alert" hidden></p></dialog>

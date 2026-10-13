@@ -71,7 +71,7 @@ test('three consecutive wins redraw the winner and restart its streak', function
         $data['matches'][] = $match;
     }
     storeArrivalState($data);
-    $response = $this->postJson('/racha/finish', ['revision' => 0])->assertOk()->assertJsonPath('data.nextMessage', 'Três vitórias seguidas! Os times foram sorteados novamente.');
+    $response = $this->postJson('/racha/finish', ['revision' => 0])->assertOk()->assertJsonPath('data.nextMessage', 'Três vitórias seguidas! Todos os presentes disponíveis entram no novo sorteio, com prioridade para quem jogou menos no dia.');
     foreach (['a', 'b'] as $team) {
         expect(count(array_intersect($response->json('data.next.teams.'.$team), $data['current']['teams']['a'])))->toBeLessThan(5);
         expect($response->json('data.next.teams.'.$team))->toHaveCount(6);

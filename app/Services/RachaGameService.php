@@ -111,13 +111,17 @@ class RachaGameService
     {
         $matches = array_values(array_filter($data['matches'], fn (array $match): bool => ($match['dayId'] ?? null) === $day->id));
         $last = array_pop($matches);
-        if (! $last || ! isset($last['winner'])) {
+        if (! $last) {
             return false;
         }
-        $winner = $last['winner'];
+        $winner = $last['winner'] ?? ($this->score($last, 'a') === $this->score($last, 'b') ? null : ($this->score($last, 'a') > $this->score($last, 'b') ? 'a' : 'b'));
+        if ($winner === null) {
+            return false;
+        }
         $streak = 1;
         foreach (array_reverse($matches) as $previous) {
-            if (($previous['winner'] ?? null) !== $winner || count(array_intersect($last['teams'][$winner], $previous['teams'][$winner])) < 5) {
+            $previousWinner = $previous['winner'] ?? ($this->score($previous, 'a') === $this->score($previous, 'b') ? null : ($this->score($previous, 'a') > $this->score($previous, 'b') ? 'a' : 'b'));
+            if ($previousWinner !== $winner || count(array_intersect($last['teams'][$winner], $previous['teams'][$winner])) < 5) {
                 break;
             }
             $streak++;
@@ -182,41 +186,61 @@ class RachaGameService
                 }
             }
         }
-        foreach ($order as $team) {
-            if (isset($goalkeepers[$team])) {
-                continue;
+        if ($redraw) {
+            // Rebuild both teams from everyone available, irrespective of the last bench.
+            foreach ($order as $team) {
+                $pool = array_values(array_filter($available, fn (array $player): bool => ! in_array($player['id'], $used, true)));
+                $keepers = array_values(array_filter($pool, fn (array $player): bool => ($player['position'] ?? 'outfield') === 'goalkeeper'));
+                $dual = array_values(array_filter($pool, fn (array $player): bool => ($player['position'] ?? 'outfield') === 'both'));
+                $candidates = $this->prioritize($keepers ?: ($dual ?: $pool), $games);
+                $goalkeepers[$team] = $candidates[0]['id'];
+                $teams[$team][] = $candidates[0]['id'];
+                $used[] = $candidates[0]['id'];
             }
             $pool = array_values(array_filter($available, fn (array $player): bool => ! in_array($player['id'], $used, true)));
-            $previousGoalkeeper = $redraw ? null : ($last['goalkeepers'][$team] ?? null);
-            if ($previousGoalkeeper !== null && in_array($previousGoalkeeper, array_column($pool, 'id'), true)) {
-                $teams[$team][] = $previousGoalkeeper;
-                $goalkeepers[$team] = $previousGoalkeeper;
-                $used[] = $previousGoalkeeper;
-
-                continue;
-            }
-            $bank = array_values(array_filter($pool, fn (array $player): bool => ! in_array($player['id'], $oldPlayers, true)));
-            $remaining = array_values(array_filter($pool, fn (array $player): bool => in_array($player['id'], $oldPlayers, true)));
-            $preferredBank = array_values(array_filter($bank, fn (array $player): bool => ($player['position'] ?? 'outfield') === 'goalkeeper'));
-            $preferredRemaining = array_values(array_filter($remaining, fn (array $player): bool => ($player['position'] ?? 'outfield') === 'goalkeeper'));
-            $dualBank = array_values(array_filter($bank, fn (array $player): bool => ($player['position'] ?? 'outfield') === 'both'));
-            $dualRemaining = array_values(array_filter($remaining, fn (array $player): bool => ($player['position'] ?? 'outfield') === 'both'));
-            $candidates = array_merge($this->prioritize($preferredBank, $games), $this->prioritize($preferredRemaining, $games), $this->prioritize($dualBank, $games), $this->prioritize($dualRemaining, $games), $this->prioritize($bank, $games), $this->prioritize($remaining, $games));
-            $goalkeeper = $candidates[0]['id'];
-            $teams[$team][] = $goalkeeper;
-            $goalkeepers[$team] = $goalkeeper;
-            $used[] = $goalkeeper;
-        }
-        foreach ($order as $team) {
-            $pool = array_values(array_filter($available, fn (array $player): bool => ! in_array($player['id'], $used, true)));
-            $bank = array_values(array_filter($pool, fn (array $player): bool => ! in_array($player['id'], $oldPlayers, true)));
-            $remaining = array_values(array_filter($pool, fn (array $player): bool => in_array($player['id'], $oldPlayers, true)));
-            $bankLine = array_values(array_filter($bank, fn (array $player): bool => ($player['position'] ?? 'outfield') !== 'goalkeeper'));
-            $bankKeepers = array_values(array_filter($bank, fn (array $player): bool => ($player['position'] ?? 'outfield') === 'goalkeeper'));
-            $candidates = array_merge($this->prioritize($bankLine, $games), $this->prioritize($bankKeepers, $games), $this->prioritize($remaining, $games));
-            foreach (array_slice($candidates, 0, 6 - count($teams[$team])) as $player) {
-                $teams[$team][] = $player['id'];
+            $selected = array_slice($this->prioritize($pool, $games), 0, 10);
+            shuffle($selected);
+            foreach ($selected as $index => $player) {
+                $teams[$index % 2 === 0 ? 'a' : 'b'][] = $player['id'];
                 $used[] = $player['id'];
+            }
+        } else {
+            foreach ($order as $team) {
+                if (isset($goalkeepers[$team])) {
+                    continue;
+                }
+                $pool = array_values(array_filter($available, fn (array $player): bool => ! in_array($player['id'], $used, true)));
+                $previousGoalkeeper = $redraw ? null : ($last['goalkeepers'][$team] ?? null);
+                if ($previousGoalkeeper !== null && in_array($previousGoalkeeper, array_column($pool, 'id'), true)) {
+                    $teams[$team][] = $previousGoalkeeper;
+                    $goalkeepers[$team] = $previousGoalkeeper;
+                    $used[] = $previousGoalkeeper;
+
+                    continue;
+                }
+                $bank = array_values(array_filter($pool, fn (array $player): bool => ! in_array($player['id'], $oldPlayers, true)));
+                $remaining = array_values(array_filter($pool, fn (array $player): bool => in_array($player['id'], $oldPlayers, true)));
+                $preferredBank = array_values(array_filter($bank, fn (array $player): bool => ($player['position'] ?? 'outfield') === 'goalkeeper'));
+                $preferredRemaining = array_values(array_filter($remaining, fn (array $player): bool => ($player['position'] ?? 'outfield') === 'goalkeeper'));
+                $dualBank = array_values(array_filter($bank, fn (array $player): bool => ($player['position'] ?? 'outfield') === 'both'));
+                $dualRemaining = array_values(array_filter($remaining, fn (array $player): bool => ($player['position'] ?? 'outfield') === 'both'));
+                $candidates = array_merge($this->prioritize($preferredBank, $games), $this->prioritize($preferredRemaining, $games), $this->prioritize($dualBank, $games), $this->prioritize($dualRemaining, $games), $this->prioritize($bank, $games), $this->prioritize($remaining, $games));
+                $goalkeeper = $candidates[0]['id'];
+                $teams[$team][] = $goalkeeper;
+                $goalkeepers[$team] = $goalkeeper;
+                $used[] = $goalkeeper;
+            }
+            foreach ($order as $team) {
+                $pool = array_values(array_filter($available, fn (array $player): bool => ! in_array($player['id'], $used, true)));
+                $bank = array_values(array_filter($pool, fn (array $player): bool => ! in_array($player['id'], $oldPlayers, true)));
+                $remaining = array_values(array_filter($pool, fn (array $player): bool => in_array($player['id'], $oldPlayers, true)));
+                $bankLine = array_values(array_filter($bank, fn (array $player): bool => ($player['position'] ?? 'outfield') !== 'goalkeeper'));
+                $bankKeepers = array_values(array_filter($bank, fn (array $player): bool => ($player['position'] ?? 'outfield') === 'goalkeeper'));
+                $candidates = array_merge($this->prioritize($bankLine, $games), $this->prioritize($bankKeepers, $games), $this->prioritize($remaining, $games));
+                foreach (array_slice($candidates, 0, 6 - count($teams[$team])) as $player) {
+                    $teams[$team][] = $player['id'];
+                    $used[] = $player['id'];
+                }
             }
         }
         if ($redraw) {
@@ -244,7 +268,7 @@ class RachaGameService
         }
         try {
             $data['next'] = $this->nextLineup($data, $day);
-            $data['nextMessage'] = $this->needsRedraw($data, $day) ? 'Três vitórias seguidas! Os times foram sorteados novamente.' : null;
+            $data['nextMessage'] = $this->needsRedraw($data, $day) ? 'Três vitórias seguidas! Todos os presentes disponíveis entram no novo sorteio, com prioridade para quem jogou menos no dia.' : null;
         } catch (ValidationException $exception) {
             $data['next'] = null;
             $data['nextMessage'] = collect($exception->errors())->flatten()->first();

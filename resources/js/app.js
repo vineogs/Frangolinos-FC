@@ -238,7 +238,16 @@ function openTab(tab) {
         if (today) selectedDayId = today.id;
     }
     document.querySelectorAll('.tab').forEach((element) => {element.hidden = element.id !== `tab-${tab}`;});
-    document.querySelectorAll('.nav-item').forEach((element) => element.classList.toggle('active', element.dataset.tab === tab));
+    document.querySelectorAll('.nav-item, .mobile-nav-item[data-tab]').forEach((element) => {
+        const active = element.dataset.tab === tab;
+        element.classList.toggle('active', active);
+        if (active) element.setAttribute('aria-current', 'page');
+        else element.removeAttribute('aria-current');
+    });
+    const moreActive = ['players', 'ranking', 'history'].includes(tab);
+    $('open-more').classList.toggle('active', moreActive);
+    if (moreActive) $('open-more').setAttribute('aria-current', 'page');
+    else $('open-more').removeAttribute('aria-current');
     $('new-match').hidden = tab !== 'match';
     $('page-title').textContent = tabs[tab][0];
     $('page-subtitle').textContent = tabs[tab][1];
@@ -248,7 +257,11 @@ document.addEventListener('click', async (event) => {
     enableAlarm();
     const target = event.target.closest('button');
     if (!target) return;
-    if (target.dataset.tab) openTab(target.dataset.tab);
+    if (target.dataset.tab) {
+        $('more-dialog').close();
+        openTab(target.dataset.tab);
+        window.scrollTo({top:0, behavior:'instant'});
+    }
     if (target.dataset.goalTeam && !busy) {goalTeam = target.dataset.goalTeam; $('goal-player').value = ''; $('goal-assist').value = ''; renderGoalPicker();}
     if (target.dataset.goalScorer && !busy) {$('goal-player').value = target.dataset.goalScorer; $('goal-assist').value = ''; renderGoalPicker();}
     if (target.dataset.goalAssist !== undefined && !busy) {$('goal-assist').value = target.dataset.goalAssist; renderGoalPicker();}
@@ -418,7 +431,7 @@ function renderNext() {
     const next = state.next?.dayId === day?.id ? state.next : null;
     $('next-match-card').hidden = Boolean(state.current) || !last || Boolean(day?.finished_at);
     $('last-result-title').textContent = last ? `Time ${(last.winner ?? (score(last,'a') > score(last,'b') ? 'a' : 'b')) === 'a' ? 'Azul' : 'Vermelho'} venceu${last.reason === 'penalties' ? ' nos pênaltis' : ''} · próxima partida` : 'Próxima partida';
-    $('rotation-info').textContent = next ? state.nextMessage ?? 'O vencedor permanece. O banco entra primeiro; as vagas restantes são sorteadas entre quem perdeu. Quem jogou menos tem prioridade, com sorteio nos empates.' : state.nextMessage ?? 'A próxima escalação será montada com os jogadores disponíveis.';
+    $('rotation-info').textContent = next ? state.nextMessage ?? 'O vencedor permanece. O banco entra primeiro; as vagas restantes são sorteadas entre quem perdeu. Quem jogou menos tem prioridade, com sorteio nos empates. Após três vitórias seguidas, os dois times são sorteados novamente.' : state.nextMessage ?? 'A próxima escalação será montada com os jogadores disponíveis.';
     $('next-lineup').innerHTML = next ? ['a','b','bank'].map((team) => {
         const ids = team === 'bank' ? next.bench : next.teams[team];
         return `<div class="draw-group team-${team === 'a' ? 'blue' : team === 'b' ? 'red' : 'bank'}"><h3>${team === 'a' ? 'Time Azul' : team === 'b' ? 'Time Vermelho' : 'Banco'}</h3>${ids.map((id) => `<div class="draw-player">${escapeHtml(playerName(id))}${id === next.goalkeepers.a || id === next.goalkeepers.b ? '<small>Goleiro</small>' : ''}</div>`).join('') || '<p class="muted">Sem jogadores</p>'}</div>`;
@@ -634,7 +647,7 @@ async function load() {
         if (new URLSearchParams(location.search).has('day')) openTab('days');
         $('save-status').textContent = '✓ Tudo salvo';
     } catch (error) {notice(error.message); $('save-status').textContent = 'Falha ao carregar';}
-    finally {busy = false; render(); if (state.current?.status === 'penalties') handleTransition(null);}
+    finally {busy = false; render(); if (state.current?.status === 'penalties') handleTransition(null); else if (loaded) startGuide(true);}
 }
 load();
 
@@ -849,3 +862,53 @@ $('free-match').addEventListener('click', async () => {
         state.current.startedAt = Date.now();
     });
 });
+
+
+const guideSteps = [
+    ['☺', 'Seu perfil é o ponto de partida', 'Escolha seu nome em Meu perfil. Se ele ainda não estiver na lista, use “Meu nome não está na lista” para se cadastrar. Este navegador lembra quem você é.'],
+    ['▦', 'Combine o próximo racha', 'Em Dias, veja data, horário e local ou marque um novo racha. No seu perfil, confirme se vai jogar e acompanhe sua participação e o pagamento.'],
+    ['◉', 'Cuide da bola rolando', 'Na Partida, marque quem já chegou, sorteie os times e inicie o cronômetro. Registre gols e assistências, faça substituições e finalize o jogo para preparar o próximo.'],
+    ['▥', 'Acompanhe a história da turma', 'Em Números, veja gols, assistências e participações. Artilharia, Histórico e Jogadores ficam no menu Mais do celular e no menu lateral do computador.'],
+    ['✳', 'Tudo a um toque', 'No celular, use a barra inferior para trocar de página. Você pode rever estas dicas pelo botão Guia ou pelo menu Mais. Bora pro jogo!'],
+];
+const guideStorageKey = 'frangolinos-guide-v1';
+let guideStep = 0;
+let guideReturnFocus = null;
+let guideSeen = false;
+try { guideSeen = localStorage.getItem(guideStorageKey) === 'seen'; } catch {}
+function renderGuide() {
+    const [icon, title, description] = guideSteps[guideStep];
+    $('guide-icon').textContent = icon;
+    $('guide-title').textContent = title;
+    $('guide-description').textContent = description;
+    $('guide-progress').textContent = `Passo ${guideStep + 1} de ${guideSteps.length}`;
+    $('guide-dots').innerHTML = guideSteps.map((_, index) => `<span class="${index === guideStep ? 'active' : ''}"></span>`).join('');
+    $('guide-back').disabled = guideStep === 0;
+    $('guide-next').textContent = guideStep === guideSteps.length - 1 ? 'Bora jogar!' : 'Próximo';
+}
+function startGuide(automatic = false) {
+    if (automatic && (guideSeen || document.querySelector('dialog[open]'))) return;
+    guideReturnFocus = document.activeElement;
+    guideStep = 0;
+    renderGuide();
+    $('guide-dialog').showModal();
+    $('guide-next').focus();
+}
+function finishGuide() {
+    guideSeen = true;
+    try { localStorage.setItem(guideStorageKey, 'seen'); } catch {}
+    $('guide-dialog').close();
+}
+$('guide-dialog').addEventListener('close', () => {
+    if (guideReturnFocus?.isConnected && guideReturnFocus.getClientRects().length) guideReturnFocus.focus();
+});
+$('guide-dialog').addEventListener('cancel', (event) => {event.preventDefault(); finishGuide();});
+$('guide-next').addEventListener('click', () => {
+    if (guideStep === guideSteps.length - 1) finishGuide();
+    else {guideStep++; renderGuide();}
+});
+$('guide-back').addEventListener('click', () => {if (guideStep > 0) {guideStep--; renderGuide();}});
+['skip-guide', 'guide-later'].forEach((id) => $(id).addEventListener('click', finishGuide));
+$('open-guide').addEventListener('click', () => startGuide());
+$('open-more').addEventListener('click', () => $('more-dialog').showModal());
+$('more-guide').addEventListener('click', () => {$('more-dialog').close(); startGuide();});

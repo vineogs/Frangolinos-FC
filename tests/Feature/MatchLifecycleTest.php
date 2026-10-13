@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\RachaDay;
+use App\Services\RachaGameService;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
 use Illuminate\Support\Facades\DB;
 
@@ -326,4 +327,69 @@ test('a free match has no time or goal limit and finishes manually', function ()
     $this->putJson('/racha', ['revision' => 0, 'data' => $data])->assertOk()->assertJsonCount(4, 'data.current.goals')->assertJsonPath('data.current.free', true);
     $this->getJson('/racha')->assertJsonCount(0, 'data.matches');
     $this->postJson('/racha/finish', ['revision' => 1])->assertOk()->assertJsonPath('data.matches.0.reason', 'manual');
+});
+
+test('the third win redraw prioritizes fewer games over the previous bench and preserves the preview', function () {
+    [$data, $day] = lifecycleFixture(20);
+    foreach ($data['players'] as &$player) {
+        $player['position'] = 'outfield';
+    }
+    unset($player);
+    $playing = array_merge($data['current']['teams']['a'], $data['current']['teams']['b']);
+    $bank = array_values(array_diff(array_column($data['players'], 'id'), $playing));
+    for ($index = 0; $index < 5; $index++) {
+        $prior = $data['current'];
+        $prior['winner'] = 'b';
+        $prior['participants'] = ['a' => $bank, 'b' => []];
+        $data['matches'][] = $prior;
+    }
+    for ($index = 0; $index < 2; $index++) {
+        $prior = $data['current'];
+        $prior['winner'] = 'a';
+        $data['matches'][] = $prior;
+    }
+    storeLifecycleState($data);
+    $response = $this->postJson('/racha/finish', ['revision' => 0])->assertOk();
+    $next = $response->json('data.next');
+    expect(array_merge($next['teams']['a'], $next['teams']['b']))->toEqualCanonicalizing($playing);
+    expect($next['bench'])->toEqualCanonicalizing($bank);
+    foreach (['a', 'b'] as $team) {
+        expect($next['teams'][$team])->toHaveCount(6)->toContain($next['goalkeepers'][$team]);
+        expect(count(array_intersect($next['teams'][$team], $data['current']['teams']['a'])))->toBeLessThan(5);
+    }
+    $this->postJson('/racha/next', ['revision' => 1, 'dayId' => $day->id])->assertOk()->assertJsonPath('data.current.teams', $next['teams']);
+});
+
+test('the third win redraw includes newcomers and excludes unavailable players', function () {
+    [$data, $day] = lifecycleFixture(20);
+    $day->update(['departed' => [$data['players'][19]['id']], 'arrived_players' => array_column(array_slice($data['players'], 0, 19), 'id')]);
+    for ($index = 0; $index < 2; $index++) {
+        $prior = $data['current'];
+        $prior['winner'] = 'a';
+        $data['matches'][] = $prior;
+    }
+    storeLifecycleState($data);
+    $next = $this->postJson('/racha/finish', ['revision' => 0])->assertOk()->json('data.next');
+    $playing = array_merge($next['teams']['a'], $next['teams']['b']);
+    foreach ([2, 13, 14, 15, 16, 17, 18] as $index) {
+        expect($playing)->toContain($data['players'][$index]['id']);
+    }
+    expect(array_merge($playing, $next['bench']))->not->toContain($data['players'][19]['id']);
+    expect(array_unique($playing))->toHaveCount(12);
+});
+
+test('redraw streaks use only consecutive wins by the same team on the same day including legacy scores', function () {
+    [$data, $day] = lifecycleFixture();
+    $games = app(RachaGameService::class);
+    $win = $data['current'];
+    $data['matches'] = [$win, $win, $win];
+    expect($games->needsRedraw($data, $day))->toBeTrue();
+    $data['matches'][1]['winner'] = 'b';
+    expect($games->needsRedraw($data, $day))->toBeFalse();
+    $data['matches'][1] = $win;
+    $data['matches'][0]['dayId'] = RachaDay::factory()->create()->id;
+    expect($games->needsRedraw($data, $day))->toBeFalse();
+    $data['matches'][0] = $win;
+    $data['matches'][1]['teams']['a'] = $win['teams']['b'];
+    expect($games->needsRedraw($data, $day))->toBeFalse();
 });

@@ -39,6 +39,7 @@ async function harness({rejectSave = false, rejectPlayer = false, responses = {}
     class Element {
         constructor(id) {this.attributes={}; this.id=id; this.value=''; this.hidden=false; this.open=false; this.dataset={}; this.handlers={}; this.classList={toggle(){}};}
         setAttribute(name,value) {this.attributes[name]=value;}
+        removeAttribute(name) {delete this.attributes[name];}
         getAttribute(name) {return this.attributes[name];}
         addEventListener(type, callback) {this.handlers[type]=callback;}
         showModal() {this.open=true;}
@@ -62,7 +63,7 @@ async function harness({rejectSave = false, rejectPlayer = false, responses = {}
         querySelectorAll: (selector) => selector === 'dialog[open]' ? [...elements.values()].filter((item) => item.id.endsWith('-dialog') && item.open) : [],
         addEventListener(type, callback) {handlers[type]=callback;},
     };
-    const context = vm.createContext({document, matchMedia:()=>themeMedia, localStorage:{getItem:(key)=>storage[key] ?? null,setItem:(key,value)=>{storage[key]=value;}}, location:{search:`?day=${day.id}`,href:`http://10.0.8.203:8001/?day=${day.id}`}, navigator:{}, URL, URLSearchParams, Date, Math, Uint8Array, crypto:{getRandomValues:webcrypto.getRandomValues.bind(webcrypto)}, cloneState, drawTeams, buildLineup, remainingSeconds, dailyStatistics, setInterval(){}, setTimeout(callback,delay){const id=++timerId;timers.set(id,{callback,delay});return id;},clearTimeout(id){timers.delete(id);}, fetch:async (url, options = {}) => {
+    const context = vm.createContext({window:{scrollTo(){}}, document, matchMedia:()=>themeMedia, localStorage:{getItem:(key)=>storage[key] ?? null,setItem:(key,value)=>{storage[key]=value;}}, location:{search:`?day=${day.id}`,href:`http://10.0.8.203:8001/?day=${day.id}`}, navigator:{}, URL, URLSearchParams, Date, Math, Uint8Array, crypto:{getRandomValues:webcrypto.getRandomValues.bind(webcrypto)}, cloneState, drawTeams, buildLineup, remainingSeconds, dailyStatistics, setInterval(){}, setTimeout(callback,delay){const id=++timerId;timers.set(id,{callback,delay});return id;},clearTimeout(id){timers.delete(id);}, fetch:async (url, options = {}) => {
         requests.push({url,options});
         if (responses[url]) return {ok:true,json:async()=>cloneState(typeof responses[url] === 'function' ? responses[url](options.body ? JSON.parse(options.body) : null,data) : responses[url])};
         if (url === '/days') return {ok:true,json:async()=>[day]};
@@ -654,4 +655,41 @@ test('the present players card lists arrivals and excludes registered players st
     assert.equal(app.element('present-players-count').textContent,1);
     assert.match(app.element('present-players').innerHTML,/Jogador 1</);
     assert.doesNotMatch(app.element('present-players').innerHTML,/Jogador 2</);
+});
+
+
+test('first visit opens the guide and finishing it persists dismissal across visits', async () => {
+    const storage = {};
+    const app = await harness({storage});
+    assert.equal(app.element('guide-dialog').open, true);
+    assert.equal(app.element('guide-back').disabled, true);
+    await app.click('guide-next');
+    assert.equal(app.element('guide-progress').textContent, 'Passo 2 de 5');
+    await app.click('guide-back');
+    assert.equal(app.element('guide-progress').textContent, 'Passo 1 de 5');
+    for (let step = 0; step < 5; step++) await app.click('guide-next');
+    assert.equal(app.element('guide-dialog').open, false);
+    assert.equal(storage['frangolinos-guide-v1'], 'seen');
+    const returning = await harness({storage});
+    assert.equal(returning.element('guide-dialog').open, false);
+    await returning.click('open-guide');
+    assert.equal(returning.element('guide-dialog').open, true);
+});
+
+test('skipping or pressing Escape dismisses the guide and More closes after navigation', async () => {
+    const storage = {};
+    const app = await harness({storage});
+    await app.click('guide-later');
+    assert.equal(storage['frangolinos-guide-v1'], 'seen');
+    await app.click('open-more');
+    assert.equal(app.element('more-dialog').open, true);
+    await app.trigger({tab:'history'});
+    assert.equal(app.element('more-dialog').open, false);
+    assert.equal(app.element('page-title').textContent, 'Histórico');
+    assert.equal(app.element('open-more').getAttribute('aria-current'), 'page');
+    await app.trigger({tab:'profile'});
+    assert.equal(app.element('open-more').getAttribute('aria-current'), undefined);
+    await app.click('open-guide');
+    app.element('guide-dialog').handlers.cancel({preventDefault(){}});
+    assert.equal(app.element('guide-dialog').open, false);
 });
