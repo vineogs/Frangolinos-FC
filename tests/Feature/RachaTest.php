@@ -271,3 +271,22 @@ test('goals accept an explicitly absent assist and reject an unknown player', fu
     $data['current']['goals'][0]['assist'] = '10000000-0000-4000-8000-000000000099';
     $this->putJson('/racha', ['revision' => 1, 'data' => $data])->assertUnprocessable();
 });
+
+test('a goal saves the opposing goalkeeper and blunder flag across reloads', function () {
+    $data = rachaFixture();
+    $data['current']['goals'][0]['goalkeeper'] = $data['players'][1]['id'];
+    $data['current']['goals'][0]['blunder'] = true;
+
+    $this->putJson('/racha', ['revision' => 0, 'data' => $data])->assertOk();
+
+    $this->getJson('/racha')->assertJsonPath('data.current.goals.0.goalkeeper', $data['players'][1]['id'])->assertJsonPath('data.current.goals.0.blunder', true);
+});
+
+test('a goal attributed to its own goalkeeper is rejected without saving', function () {
+    $data = rachaFixture();
+    $data['current']['goals'][0]['goalkeeper'] = $data['players'][0]['id'];
+
+    $this->putJson('/racha', ['revision' => 0, 'data' => $data])->assertUnprocessable()->assertJsonValidationErrors('data');
+
+    $this->getJson('/racha')->assertJsonPath('revision', 0)->assertJsonPath('data.current', null);
+});

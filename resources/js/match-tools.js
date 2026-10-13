@@ -44,7 +44,7 @@ export function remainingSeconds(match, now = Date.now()) {
 
 export function dailyStatistics(state, day) {
     if (!day) return {matches:0,goals:0,players:[],scorers:[],games:[]};
-    if (day.finished_at && day.statistics) return day.statistics;
+
     const matches = state.matches.filter((match) => match.dayId === day.id);
     const players = state.players.map((player) => {
         let games = 0, wins = 0, goals = 0, assists = 0;
@@ -58,8 +58,31 @@ export function dailyStatistics(state, day) {
             goals += match.goals.filter((goal) => goal.player === player.id).length;
             assists += match.goals.filter((goal) => goal.assist === player.id).length;
         }
-        return {...player,games,wins,goals,assists,departed:day.departed?.includes(player.id) ?? false};
+        return {...player,...goalkeeperStats(matches,player.id),games,wins,goals,assists,departed:day.departed?.includes(player.id) ?? false};
     }).filter((player) => player.games > 0 || day.attendees.includes(player.id)).sort((a,b) => b.goals - a.goals || b.wins - a.wins || a.name.localeCompare(b.name,'pt-BR'));
     const top = players[0]?.goals ?? 0;
     return {matches:matches.length,goals:matches.reduce((sum,match) => sum + match.goals.length,0),players,scorers:top > 0 ? players.filter((player) => player.goals === top) : [],games:matches};
+}
+
+export function goalkeeperStats(matches, id) {
+    let goalkeeperGames = 0, goalsConceded = 0, cleanSheets = 0, blunders = 0;
+    for (const match of matches) {
+        const changes = [...(match.substitutions ?? []).filter(item => item.position === 'goalkeeper'), ...(match.keeperChanges ?? [])];
+        const played = Object.values(match.goalkeepers ?? {}).includes(id) || changes.some(item => item.out === id || item.in === id);
+        if (!played) continue;
+        goalkeeperGames++;
+        const conceded = match.goals.filter(goal => {
+            if ('goalkeeper' in goal) return goal.goalkeeper === id;
+            const team = goal.team === 'a' ? 'b' : 'a';
+            let keeper = match.goalkeepers?.[team];
+            for (const change of changes.filter(item => item.team === team).sort((a,b) => b.time - a.time)) {
+                if (change.time > goal.time) keeper = change.out;
+            }
+            return keeper === id;
+        });
+        goalsConceded += conceded.length;
+        blunders += conceded.filter(goal => goal.blunder).length;
+        if (!conceded.length) cleanSheets++;
+    }
+    return {goalkeeperGames, goalsConceded, cleanSheets, blunders, concededAverage: goalkeeperGames ? goalsConceded / goalkeeperGames : 0};
 }

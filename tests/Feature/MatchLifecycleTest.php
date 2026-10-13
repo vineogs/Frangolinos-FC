@@ -393,3 +393,27 @@ test('redraw streaks use only consecutive wins by the same team on the same day 
     $data['matches'][1]['teams']['a'] = $win['teams']['b'];
     expect($games->needsRedraw($data, $day))->toBeFalse();
 });
+
+test('day statistics automatically count goalkeeper goals clean sheets and blunders after a keeper change', function () {
+    [$data, $day] = lifecycleFixture();
+    $match = $data['current'];
+    $original = $data['players'][1]['id'];
+    $replacement = $data['players'][8]['id'];
+    $match['keeperChanges'] = [['out' => $original, 'in' => $replacement, 'team' => 'b', 'time' => 95]];
+    $match['goalkeepers']['b'] = $replacement;
+    $match['goals'][0]['goalkeeper'] = $original;
+    $match['goals'][0]['blunder'] = true;
+    $match['goals'][] = ['id' => 'a3000000-0000-4000-8000-000000000002', 'team' => 'a', 'player' => $data['players'][3]['id'], 'time' => 99, 'goalkeeper' => $replacement];
+    $data['matches'] = [$match];
+    $data['current'] = null;
+    storeLifecycleState($data);
+
+    $response = $this->getJson('/days/'.$day->id.'/statistics')->assertOk();
+    $players = collect($response->json('players'))->keyBy('id');
+
+    expect($players[$original]['goalsConceded'])->toBe(1);
+    expect($players[$original]['blunders'])->toBe(1);
+    expect($players[$replacement]['goalsConceded'])->toBe(1);
+    expect($players[$data['players'][0]['id']]['cleanSheets'])->toBe(1);
+    expect($players[$data['players'][0]['id']]['goalkeeperGames'])->toBe(1);
+});

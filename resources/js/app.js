@@ -185,7 +185,7 @@ function render() {
     $('finish-match').disabled = busy || !match || conflicted || match.status === 'penalties';
     $('penalties-card').hidden = match?.status !== 'penalties';
     $('events-count').textContent = `${match?.goals.length ?? 0} gols`;
-    $('events').innerHTML = match?.goals.length ? [...match.goals].reverse().map((goal) => `<div class="event-row"><span class="event-time">${time(goal.time)}</span><span>⚽</span><div class="event-text">${escapeHtml(playerName(goal.player))}<small>${goal.assist ? `Passe de ${escapeHtml(playerName(goal.assist))} · ` : ''}Gol do Time ${goal.team === 'a' ? 'Azul' : 'Vermelho'}</small></div><button class="text-button" ${busy || match.status === 'penalties' ? 'disabled' : ''} data-remove-goal="${goal.id}" aria-label="Desfazer gol de ${escapeHtml(playerName(goal.player))}">Desfazer</button></div>`).join('') : empty('Nenhum gol por aqui ainda.<br>Quando a rede balançar, registre o lance.');
+    $('events').innerHTML = match?.goals.length ? [...match.goals].reverse().map((goal) => `<div class="event-row"><span class="event-time">${time(goal.time)}</span><span>⚽</span><div class="event-text">${escapeHtml(playerName(goal.player))}<small>${goal.assist ? `Passe de ${escapeHtml(playerName(goal.assist))} · ` : ''}Gol do Time ${goal.team === 'a' ? 'Azul' : 'Vermelho'}${goal.blunder ? ` · Frango de ${escapeHtml(playerName(goal.goalkeeper))}` : ''}</small></div><button class="text-button" ${busy || match.status === 'penalties' ? 'disabled' : ''} data-remove-goal="${goal.id}" aria-label="Desfazer gol de ${escapeHtml(playerName(goal.player))}">Desfazer</button></div>`).join('') : empty('Nenhum gol por aqui ainda.<br>Quando a rede balançar, registre o lance.');
     $('lineup').innerHTML = match ? ['a','b'].map((team) => `<div class="lineup-title ${team === 'b' ? 'red-text' : ''}"><span>● Time ${team === 'a' ? 'Azul' : 'Vermelho'}</span><span>${match.teams[team].length}</span></div><label class="keeper-picker">Goleiro<select data-match-keeper="${team}" ${busy || match.status === 'penalties' ? 'disabled' : ''}>${!match.goalkeepers?.[team] ? '<option value="">Escolha quem assume o gol</option>' : ''}${match.teams[team].map((id) => `<option value="${id}" ${id === match.goalkeepers?.[team] ? 'selected' : ''}>${escapeHtml(playerName(id))}</option>`).join('')}</select></label>${[...match.teams[team]].sort((a,b) => Number(b === match.goalkeepers?.[team]) - Number(a === match.goalkeepers?.[team])).map((id) => `<div class="player-row"><span class="avatar">${escapeHtml(playerName(id).slice(0,2).toUpperCase())}</span><span>${escapeHtml(playerName(id))}${id === match.goalkeepers?.[team] ? '<span class="goalkeeper-badge">No gol</span>' : '<small>Na linha</small>'}</span><small>${match.goals.filter((goal) => goal.player === id).length || '—'} ⚽</small>${id !== match.goalkeepers?.[team] ? `<button class="manage-player" data-temporary-keeper="${id}" data-keeper-team="${team}" ${busy || !loaded || conflicted || match.status === 'penalties' ? 'disabled' : ''}>Goleiro</button>` : ''}${match.dayId ? `<button class="manage-player" data-manage-player="${id}" ${busy ? 'disabled' : ''}>Trocar</button>` : ''}</div>`).join('')}`).join('') : empty('Os times ainda não foram escalados.<br>Crie uma partida para entrar em campo.');
     $('vacancies-list').innerHTML = (match?.vacancies ?? []).map((vacancy) => `<div class="vacancy-row">Vaga no Time ${vacancy.team === 'a' ? 'Azul' : 'Vermelho'} · ${vacancy.position === 'goalkeeper' ? 'Goleiro' : 'Linha'}<button class="text-button" data-manage-player="${vacancy.player}" data-vacancy="true">Preencher vaga</button></div>`).join('');
     const displayedPlayers = state.players.filter((player) => ($('show-archived').checked || player.active !== false) && player.name.toLocaleLowerCase('pt-BR').includes($('player-search').value.toLocaleLowerCase('pt-BR')));
@@ -197,11 +197,11 @@ function render() {
     $('departed-lineup').innerHTML = match && matchDay?.departed?.length ? `<div class="lineup-title bank-text">Fora do racha hoje</div>${matchDay.departed.map((id) => `<div class="player-row"><span>${escapeHtml(playerName(id))}</span><button class="text-button" data-return-player="${id}" data-return-day="${matchDay.id}" ${busy ? 'disabled' : ''}>Retornar ao banco</button></div>`).join('')}` : '';
     $('bench-lineup').innerHTML = match?.bench?.length ? `<div class="lineup-title bank-text">Banco · ${match.bench.length}</div>${match.bench.map((id) => `<div class="player-row"><span class="avatar">${escapeHtml(playerName(id).slice(0,2).toUpperCase())}</span><span>${escapeHtml(playerName(id))}</span><small>${state.players.find((player) => player.id === id)?.position === 'goalkeeper' ? 'Goleiro' : 'Linha'}</small></div>`).join('')}` : '';
     let rank = 0;
-    $('ranking-list').innerHTML = ranking.length ? '<div class="ranking-row table-header"><span>#</span><span>JOGADOR</span><span>JOGOS</span><span>ASSIST.</span><span>GOLS</span></div>' + ranking.map((player, index) => {
+    $('ranking-list').innerHTML = ranking.length ? '<div class="ranking-row table-header"><span>#</span><span>JOGADOR</span><span>JOGOS</span><span>ASSIST.</span><span>GOLS</span></div>' + ranking.slice(0,10).map((player, index) => {
         if (index === 0 || player.goals !== ranking[index-1].goals) rank = index + 1;
         return `<div class="ranking-row"><span class="rank">${rank}</span><span>${escapeHtml(player.name)}</span><span>${player.games}</span><span>${player.assists ?? 0}</span><strong>${player.goals}</strong></div>`;
     }).join('') : empty('O ranking começa com os jogadores.<br>Cadastre os amigos e bora jogar!');
-    $('history-list').innerHTML = state.matches.length ? [...state.matches].reverse().map((item) => `<details class="history-card"><summary><span>${date(item.date)} · ${time(item.elapsed)}</span><strong>Azul ${score(item,'a')} × ${score(item,'b')} Vermelho</strong><span class="muted">Ver lances ↓</span></summary><div class="history-detail"><p><strong>${item.winner ? `Time ${item.winner === 'a' ? 'Azul' : 'Vermelho'} venceu` : score(item,'a') === score(item,'b') ? 'Empate' : `Time ${score(item,'a') > score(item,'b') ? 'Azul' : 'Vermelho'} venceu`}</strong> · ${item.reason === 'penalties' ? 'Decisão nos pênaltis' : !item.free && item.duration === 10 && Math.max(score(item,'a'),score(item,'b')) >= 2 ? '2 gols marcados' : !item.free && item.elapsed >= item.duration * 60 ? 'Tempo encerrado' : 'Encerrada manualmente'}</p><p>Time Azul: ${(item.participants?.a ?? item.teams.a).map((id) => escapeHtml(playerName(id)) + (id === item.goalkeepers?.a ? ' (goleiro)' : '')).join(', ')}<br>Time Vermelho: ${(item.participants?.b ?? item.teams.b).map((id) => escapeHtml(playerName(id)) + (id === item.goalkeepers?.b ? ' (goleiro)' : '')).join(', ')}</p>${item.goals.length ? item.goals.map((goal) => `<div>⚽ ${time(goal.time)} · ${escapeHtml(playerName(goal.player))}${goal.assist ? ` · Passe de ${escapeHtml(playerName(goal.assist))}` : ''} · Time ${goal.team === 'a' ? 'Azul' : 'Vermelho'}</div>`).join('') : 'A rede não balançou: jogo sem gols.'}</div></details>`).join('') : empty('Toda resenha tem uma história.<br>As partidas finalizadas vão aparecer aqui.');
+    $('history-list').innerHTML = state.matches.length ? [...state.matches].reverse().map((item) => `<details class="history-card"><summary><span>${date(item.date)} · ${time(item.elapsed)}</span><strong>Azul ${score(item,'a')} × ${score(item,'b')} Vermelho</strong><span class="muted">Ver lances ↓</span></summary><div class="history-detail"><p><strong>${item.winner ? `Time ${item.winner === 'a' ? 'Azul' : 'Vermelho'} venceu` : score(item,'a') === score(item,'b') ? 'Empate' : `Time ${score(item,'a') > score(item,'b') ? 'Azul' : 'Vermelho'} venceu`}</strong> · ${item.reason === 'penalties' ? 'Decisão nos pênaltis' : !item.free && item.duration === 10 && Math.max(score(item,'a'),score(item,'b')) >= 2 ? '2 gols marcados' : !item.free && item.elapsed >= item.duration * 60 ? 'Tempo encerrado' : 'Encerrada manualmente'}</p><p>Time Azul: ${(item.participants?.a ?? item.teams.a).map((id) => escapeHtml(playerName(id)) + (id === item.goalkeepers?.a ? ' (goleiro)' : '')).join(', ')}<br>Time Vermelho: ${(item.participants?.b ?? item.teams.b).map((id) => escapeHtml(playerName(id)) + (id === item.goalkeepers?.b ? ' (goleiro)' : '')).join(', ')}</p>${item.goals.length ? item.goals.map((goal) => `<div>⚽ ${time(goal.time)} · ${escapeHtml(playerName(goal.player))}${goal.assist ? ` · Passe de ${escapeHtml(playerName(goal.assist))}` : ''} · Time ${goal.team === 'a' ? 'Azul' : 'Vermelho'}${goal.blunder ? ` · Frango de ${escapeHtml(playerName(goal.goalkeeper))}` : ''}</div>`).join('') : 'A rede não balançou: jogo sem gols.'}</div></details>`).join('') : empty('Toda resenha tem uma história.<br>As partidas finalizadas vão aparecer aqui.');
     renderClock();
     if ($('goal-dialog').open) renderGoalPicker();
 }
@@ -215,15 +215,27 @@ function renderGeneralStatistics(ranking) {
         ['Assistências', matches.reduce((total, match) => total + match.goals.filter((goal) => goal.assist).length, 0), 'Passes registrados nos gols'],
         ['Jogadores cadastrados', state.players.length, 'Inclui jogadores arquivados'],
     ];
-    for (const [label, metric, unit] of [['Artilharia', 'goals', 'gols'], ['Mais assistências', 'assists', 'assistências'], ['Mais partidas jogadas', 'games', 'partidas']]) {
+    for (const metric of ['goals','assists','games']) {
         const ordered = [...ranking].sort((a,b) => b[metric] - a[metric] || a.name.localeCompare(b.name, 'pt-BR'));
         const top = ordered[0]?.[metric] ?? 0;
-        const leaders = ordered.filter((player) => top > 0 && player[metric] === top);
-        cards.push([label, leaders.length ? leaders.map((player) => player.name).join(', ') : '—', top ? `${top} ${unit}${leaders.length > 1 ? ' · empate' : ''}` : 'Nenhum registro ainda']);
         let rank = 0;
-        $('statistics-' + metric).innerHTML = top ? ordered.filter((player) => player[metric] > 0).map((player,index) => {
+        $('statistics-' + metric).innerHTML = top ? ordered.filter((player) => player[metric] > 0).slice(0,10).map((player,index) => {
             if (index === 0 || player[metric] !== ordered[index-1][metric]) rank = index + 1;
             return `<div class="general-ranking-row"><span>${rank}</span><span>${escapeHtml(player.name)}</span><strong>${player[metric]}</strong></div>`;
+        }).join('') : empty('Nenhum registro ainda.');
+    }
+    const keepers = goalkeeperPlayers(state.matches);
+    for (const [metric, ascending, table] of [
+        ['goalsConceded', true, 'conceded-least'],
+        ['goalsConceded', false, 'conceded-most'],
+        ['cleanSheets', false, 'clean-sheets'],
+        ['blunders', false, 'blunders'],
+    ]) {
+        const ordered = [...keepers].filter(player => metric === 'goalsConceded' || player[metric] > 0).sort((a,b) => (ascending ? a[metric] - b[metric] : b[metric] - a[metric]) || a.name.localeCompare(b.name,'pt-BR')).slice(0,10);
+        let rank = 0;
+        $('statistics-' + table).innerHTML = ordered.length ? ordered.map((player,index) => {
+            if (index === 0 || player[metric] !== ordered[index-1][metric]) rank = index + 1;
+            return `<div class="general-ranking-row"><span>${rank}</span><span>${escapeHtml(player.name)}<small class="goalkeeper-games-caption">${player.goalkeeperGames} ${player.goalkeeperGames === 1 ? 'jogo no gol' : 'jogos no gol'}</small></span><strong>${player[metric]}</strong></div>`;
         }).join('') : empty('Nenhum registro ainda.');
     }
     $('general-statistics').innerHTML = cards.map(([label,value,caption]) => `<article class="stat"><span>${label}</span><strong${typeof value === 'string' ? ' class="statistics-name"' : ''}>${escapeHtml(value)}</strong><small>${escapeHtml(caption)}</small></article>`).join('');
@@ -318,6 +330,10 @@ async function setTemporaryKeeper(team, id) {
     if (!state.current || state.current.status === 'penalties' || !state.current.teams[team]?.includes(id)) return;
     await mutate(() => {
         state.current.goalkeepers ??= {a:null,b:null};
+        const previous = state.current.goalkeepers[team];
+        if (previous !== id && (state.current.startedAt !== null || state.current.elapsed > 0)) {
+            (state.current.keeperChanges ??= []).push({out:previous,in:id,team,time:elapsed()});
+        }
         state.current.goalkeepers[team] = id;
         state.current.vacancies = (state.current.vacancies ?? []).map((vacancy) => vacancy.team === team && vacancy.position === 'goalkeeper' ? {...vacancy,position:'outfield'} : vacancy);
     });
@@ -390,7 +406,7 @@ $('toggle-clock').addEventListener('click', () => {enableAlarm(); return mutate(
 });});
 $('add-goal').addEventListener('click', () => {
     if (!state.current || busy) return;
-    goalTeam = null; $('goal-player').value = ''; $('goal-assist').value = '';
+    goalTeam = null; $('goal-blunder').checked = false; $('goal-player').value = ''; $('goal-assist').value = '';
     notice(''); renderGoalPicker(); $('goal-dialog').showModal();
 });
 function renderGoalPicker() {
@@ -419,7 +435,7 @@ $('goal-form').addEventListener('submit', async (event) => {
     const player = $('goal-player').value, assist = $('goal-assist').value || null;
     if (!goalTeam || !state.current.teams[goalTeam].includes(player) || (assist && (assist === player || !state.current.teams[goalTeam].includes(assist)))) {notice('Escolha o autor do gol e um passe de outro jogador do mesmo time.'); return;}
     if (state.current.status === 'penalties' || state.current.vacancies?.length || (!state.current.startedAt && !state.current.elapsed)) {notice('Inicie ou retome a partida antes de registrar o gol.'); return;}
-    if (await mutate(() => {state.current.goals.push({id:uid(),player,assist,team:goalTeam,time:elapsed()});})) {$('goal-dialog').close(); if (state.current) notice('Gol registrado!');}
+    if (await mutate(() => {state.current.goals.push({id:uid(),player,assist,team:goalTeam,time:elapsed(),goalkeeper:state.current.goalkeepers?.[goalTeam === 'a' ? 'b' : 'a'] ?? null,blunder:$('goal-blunder').checked});})) {$('goal-dialog').close(); if (state.current) notice('Gol registrado!');}
 });
 $('finish-match').addEventListener('click', () => $('confirm-dialog').showModal());
 $('confirm-finish').addEventListener('click', async () => {await lifecycle('/racha/finish');});
@@ -446,6 +462,7 @@ function renderDayStatistics() {
     const expanded = new Set([...document.querySelectorAll('[data-day-match][open]')].map((element) => element.dataset.dayMatch));
     const leader = stats.scorers.length > 2 ? `${stats.scorers.length} empatados` : stats.scorers.map((player) => escapeHtml(player.name)).join(', ') || '—';
     $('day-statistics-status').textContent = day?.finished_at ? 'RESUMO FINAL' : 'ACOMPANHAMENTO DO DIA';
+    $('day-goalkeepers').innerHTML = day ? goalkeeperRanking(stats.games) : '';
     $('day-statistics').innerHTML = day ? `<div class="day-summary"><div>Partidas registradas<strong>${stats.matches}</strong></div><div>Gols no dia<strong>${stats.goals}</strong></div><div>Artilheiro${stats.scorers.length > 1 ? 's' : ''}<strong>${leader}</strong></div></div><h3 class="stats-section-title">Top 5 artilheiros do dia</h3>${topFive.length ? `<div class="day-player-row table-header"><span>JOGADOR</span><span>JOGOS</span><span>VITÓRIAS</span><span>GOLS</span></div>${topFive.map((player) => `<div class="day-player-row"><span>${escapeHtml(player.name)}${player.departed ? ' · Saiu' : ''}</span><span>${player.games}</span><span>${player.wins}</span><strong>${player.goals}</strong></div>`).join('')}` : '<p class="muted">Nenhum gol registrado neste dia.</p>'}<h3 class="stats-section-title">Partidas do dia · clique para ver os detalhes</h3>${stats.games.map((match,index) => {
         const participants = match.participants ?? match.teams;
         const substitutions = match.substitutions ?? [];
@@ -454,7 +471,7 @@ function renderDayStatistics() {
             const assists = match.goals.filter((goal) => goal.assist === id).length;
             const keeper = id === match.goalkeepers?.[team] || substitutions.some((item) => item.team === team && item.out === id && item.position === 'goalkeeper');
             return `<div class="match-player-stat"><span>${escapeHtml(playerName(id))}${keeper ? ' · No gol' : ''}</span><strong>${goals} ⚽ · ${assists} <span title="Assistências" aria-label="Assistências">👟</span></strong></div>`;
-        }).join('')}</section>`).join('')}</div>${match.goals.map((goal) => `<div class="match-event-stat">⚽ ${time(goal.time)} · ${escapeHtml(playerName(goal.player))}${goal.assist ? ` · Passe de ${escapeHtml(playerName(goal.assist))}` : ''} · Time ${goal.team === 'a' ? 'Azul' : 'Vermelho'}</div>`).join('')}${substitutions.map((item) => `<div class="match-event-stat">⇄ ${time(item.time)} · ${escapeHtml(playerName(item.out))} → ${item.in ? escapeHtml(playerName(item.in)) : 'Vaga aberta'}${item.departed ? ' · Saiu do racha' : ''}</div>`).join('')}</div></details>`;
+        }).join('')}</section>`).join('')}</div>${match.goals.map((goal) => `<div class="match-event-stat">⚽ ${time(goal.time)} · ${escapeHtml(playerName(goal.player))}${goal.assist ? ` · Passe de ${escapeHtml(playerName(goal.assist))}` : ''} · Time ${goal.team === 'a' ? 'Azul' : 'Vermelho'}${goal.blunder ? ` · Frango de ${escapeHtml(playerName(goal.goalkeeper))}` : ''}</div>`).join('')}${substitutions.map((item) => `<div class="match-event-stat">⇄ ${time(item.time)} · ${escapeHtml(playerName(item.out))} → ${item.in ? escapeHtml(playerName(item.in)) : 'Vaga aberta'}${item.departed ? ' · Saiu do racha' : ''}</div>`).join('')}</div></details>`;
     }).join('') || '<p class="muted">As partidas finalizadas aparecem aqui.</p>'}` : empty('Selecione um dia para acompanhar todas as partidas.');
 }
 function renderDays() {
@@ -728,6 +745,8 @@ function renderProfile() {
     const goals = matches.reduce((total,match) => total + match.goals.filter((goal) => goal.player === player.id).length,0);
     const wins = matches.filter((match) => (match.participants ?? match.teams)[match.winner]?.includes(player.id)).length;
     const assists = matches.reduce((total,match) => total + match.goals.filter((goal) => goal.assist === player.id).length,0);
+    const keeperStats = dailyStatistics({...state,matches:matches.map(match => ({...match,dayId:'profile'}))}, {id:'profile',attendees:[]}).players.find(item => item.id === player.id);
+    $('profile-goalkeeper-stats').innerHTML = keeperStats?.goalkeeperGames ? keeperCards(keeperStats) : '';
     $('profile-stats').innerHTML = [['Partidas',matches.length],['Gols',goals],['Assistências',assists],['Vitórias',wins]].map(([label,value]) => `<article class="stat"><span>${label}</span><strong>${value}</strong><small>Minhas estatísticas gerais</small></article>`).join('');
     const upcoming = days.filter((day) => !day.finished_at);
     $('profile-attendance-panel').hidden = false;
@@ -912,3 +931,19 @@ $('guide-back').addEventListener('click', () => {if (guideStep > 0) {guideStep--
 $('open-guide').addEventListener('click', () => startGuide());
 $('open-more').addEventListener('click', () => $('more-dialog').showModal());
 $('more-guide').addEventListener('click', () => {$('more-dialog').close(); startGuide();});
+
+function keeperSummary(player) {
+    return `<div class="keeper-summary"><strong>${player.goalkeeperGames} jogos no gol · ${player.goalsConceded} gols sofridos</strong><span>${player.concededAverage.toLocaleString('pt-BR',{maximumFractionDigits:2})} sofridos por partida · ${player.cleanSheets} partidas sem sofrer gols · ${player.blunders} frangos</span></div>`;
+}
+function goalkeeperRanking(matches) {
+    const stats = dailyStatistics({...state,matches:matches.map(match => ({...match,dayId:'keepers'}))}, {id:'keepers',attendees:[]});
+    const keepers = stats.players.filter(player => player.goalkeeperGames > 0).sort((a,b) => a.concededAverage - b.concededAverage || b.cleanSheets - a.cleanSheets || b.goalkeeperGames - a.goalkeeperGames || a.name.localeCompare(b.name,'pt-BR'));
+    return '<h3>Goleiros · menos gols sofridos por partida</h3><p class="muted">Somente partidas finalizadas. Jogos no gol incluem participações com substituição.</p>' + (keepers.slice(0,10).map(player => `<div class="keeper-row"><strong>${escapeHtml(player.name)}</strong>${keeperSummary(player)}</div>`).join('') || empty('Nenhuma partida no gol registrada.'));
+}
+
+function goalkeeperPlayers(matches) {
+    return dailyStatistics({...state,matches:matches.map(match => ({...match,dayId:'keepers'}))}, {id:'keepers',attendees:[]}).players.filter(player => player.goalkeeperGames > 0);
+}
+function keeperCards(player) {
+    return [['Jogos no gol',player.goalkeeperGames],['Gols sofridos',player.goalsConceded],['Média de gols sofridos',player.concededAverage.toLocaleString('pt-BR',{maximumFractionDigits:2})],['Partidas sem sofrer gols',player.cleanSheets],['Frangos',player.blunders]].map(([label,value]) => `<article class="stat"><span>${label}</span><strong>${value}</strong><small>Minhas estatísticas no gol · partidas finalizadas</small></article>`).join('');
+}

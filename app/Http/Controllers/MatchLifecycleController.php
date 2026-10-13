@@ -152,6 +152,6 @@ class MatchLifecycleController extends Controller
     {
         $data = json_decode(DB::table('racha_states')->where('id', 1)->value('data'), true);
 
-        return response()->json($day->statistics ?? $this->games->statistics($data, $day));
+        return response()->json($this->games->statistics($data, $day));
     }
 }

@@ -389,3 +389,16 @@ dialog { background: var(--surface); max-height: min(85vh, 85dvh); overscroll-be
     #open-guide { min-height: 44px; padding: 8px 12px; }
     html { scroll-padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px)); }
 }
+
+.brand-logo { width: 64px; height: 64px; object-fit: cover; object-position: center; border-radius: 10px; background: white; }
+.club-logo { width: 42px; height: 42px; object-fit: cover; border-radius: 8px; }
+.goal-blunder { display: flex; align-items: center; gap: 10px; margin-top: 20px; font-size: 13px; }
+.goal-blunder input { width: auto; }
+.keeper-row { padding: 14px 0; border-bottom: 1px solid var(--border); }
+.keeper-summary { display: grid; gap: 8px; padding: 14px 0; font-size: 12px; }
+.keeper-summary span { color: var(--muted); }
+
+
+.topbar-brand { display: flex; align-items: center; gap: 10px; }
+
+.goalkeeper-games-caption { display: block; margin-top: 4px; font-size: 10px; color: var(--muted); }

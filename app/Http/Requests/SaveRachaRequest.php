@@ -28,8 +28,8 @@ class SaveRachaRequest extends FormRequest
             'data.next' => ['sometimes', 'nullable', 'array'],
             'data.nextMessage' => ['sometimes', 'nullable', 'string'],
             'data.matches' => ['present', 'array', 'max:2000'],
-            'data.current' => ['present', 'nullable', 'array:id,date,duration,elapsed,startedAt,teams,goals,goalkeepers,dayId,bench,status,winner,reason,participants,substitutions,vacancies,free'],
-            'data.matches.*' => ['array:id,date,duration,elapsed,startedAt,teams,goals,goalkeepers,dayId,bench,status,winner,reason,participants,substitutions,vacancies,free'],
+            'data.current' => ['present', 'nullable', 'array:id,date,duration,elapsed,startedAt,teams,goals,goalkeepers,dayId,bench,status,winner,reason,participants,substitutions,vacancies,free,keeperChanges'],
+            'data.matches.*' => ['array:id,date,duration,elapsed,startedAt,teams,goals,goalkeepers,dayId,bench,status,winner,reason,participants,substitutions,vacancies,free,keeperChanges'],
         ];
         foreach (['data.current', 'data.matches.*'] as $prefix) {
             $required = $prefix === 'data.current' ? 'required_with:data.current' : 'required';
@@ -71,7 +71,15 @@ class SaveRachaRequest extends FormRequest
                 $rules[$prefix.'.teams.'.$team.'.*'] = ['required', 'uuid'];
             }
             $rules[$prefix.'.goals'] = ['present', 'array', 'max:1000'];
-            $rules[$prefix.'.goals.*'] = ['array:id,player,assist,team,time'];
+            $rules[$prefix.'.goals.*'] = ['array:id,player,assist,team,time,goalkeeper,blunder'];
+            $rules[$prefix.'.keeperChanges'] = ['sometimes', 'array', 'max:1000'];
+            $rules[$prefix.'.keeperChanges.*'] = ['array:out,in,team,time'];
+            $rules[$prefix.'.keeperChanges.*.out'] = ['present', 'nullable', 'uuid'];
+            $rules[$prefix.'.keeperChanges.*.in'] = ['required', 'uuid'];
+            $rules[$prefix.'.keeperChanges.*.team'] = ['required', 'in:a,b'];
+            $rules[$prefix.'.keeperChanges.*.time'] = ['required', 'numeric', 'min:0', 'max:86400'];
+            $rules[$prefix.'.goals.*.goalkeeper'] = ['sometimes', 'nullable', 'uuid'];
+            $rules[$prefix.'.goals.*.blunder'] = ['sometimes', 'boolean'];
             $rules[$prefix.'.goals.*.id'] = ['required', 'uuid'];
             $rules[$prefix.'.goals.*.player'] = ['required', 'uuid'];
             $rules[$prefix.'.goals.*.assist'] = ['sometimes', 'nullable', 'uuid'];
@@ -156,6 +164,13 @@ class SaveRachaRequest extends FormRequest
                 foreach ($match['goals'] as $goal) {
                     $assist = $goal['assist'] ?? null;
                     $newGoal = $isCurrent && ! in_array($goal['id'], array_column($stored['current']['goals'] ?? [], 'id'), true);
+                    $opponent = $goal['team'] === 'a' ? 'b' : 'a';
+                    if (isset($goal['goalkeeper']) && (! in_array($goal['goalkeeper'], $participation[$opponent], true) || ($newGoal && $goal['goalkeeper'] !== ($match['goalkeepers'][$opponent] ?? null)))) {
+                        $validator->errors()->add('data', 'O gol sofrido deve ser atribuído ao goleiro adversário em campo.');
+                    }
+                    if (($goal['blunder'] ?? false) && ! isset($goal['goalkeeper'])) {
+                        $validator->errors()->add('data', 'Identifique o goleiro adversário para registrar um frango.');
+                    }
                     $eligible = $newGoal ? $match['teams'][$goal['team']] : $participation[$goal['team']];
                     if ($assist !== null && ($assist === $goal['player'] || ! in_array($assist, $eligible, true))) {
                         $validator->errors()->add('data', 'A assistência deve ser de outro jogador do mesmo time, em campo no momento do gol.');

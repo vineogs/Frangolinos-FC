@@ -89,7 +89,7 @@ class RachaGameService
                 $assists += count(array_filter($match['goals'], fn (array $goal): bool => ($goal['assist'] ?? null) === $player['id']));
             }
             if ($games > 0 || in_array($player['id'], $day->attendees, true)) {
-                $players[] = ['id' => $player['id'], 'name' => $player['name'], 'position' => $player['position'] ?? 'outfield', 'games' => $games, 'wins' => $wins, 'goals' => $goals, 'assists' => $assists, 'departed' => in_array($player['id'], $day->departed ?? [], true)];
+                $players[] = ['id' => $player['id'], 'name' => $player['name'], 'position' => $player['position'] ?? 'outfield', ...$this->goalkeeperStatistics($matches, $player['id']), 'games' => $games, 'wins' => $wins, 'goals' => $goals, 'assists' => $assists, 'departed' => in_array($player['id'], $day->departed ?? [], true)];
             }
         }
         usort($players, fn (array $a, array $b): int => $b['goals'] <=> $a['goals'] ?: $b['wins'] <=> $a['wins'] ?: strcmp($a['name'], $b['name']));
@@ -97,6 +97,43 @@ class RachaGameService
         $top = $players[0]['goals'] ?? 0;
 
         return ['matches' => count($matches), 'goals' => $goals, 'players' => $players, 'scorers' => $top > 0 ? array_values(array_filter($players, fn (array $player): bool => $player['goals'] === $top)) : [], 'games' => $matches];
+    }
+
+    public function goalkeeperStatistics(array $matches, string $id): array
+    {
+        $games = 0;
+        $conceded = 0;
+        $cleanSheets = 0;
+        $blunders = 0;
+        foreach ($matches as $match) {
+            $changes = [...array_values(array_filter($match['substitutions'] ?? [], fn (array $item): bool => ($item['position'] ?? null) === 'goalkeeper')), ...($match['keeperChanges'] ?? [])];
+            $played = in_array($id, $match['goalkeepers'] ?? [], true) || count(array_filter($changes, fn (array $item): bool => $item['out'] === $id || $item['in'] === $id)) > 0;
+            if (! $played) {
+                continue;
+            }
+            $games++;
+            $goals = array_filter($match['goals'], function (array $goal) use ($match, $changes, $id): bool {
+                if (array_key_exists('goalkeeper', $goal)) {
+                    return $goal['goalkeeper'] === $id;
+                }
+                $team = $goal['team'] === 'a' ? 'b' : 'a';
+                $keeper = $match['goalkeepers'][$team] ?? null;
+                $teamChanges = array_values(array_filter($changes, fn (array $item): bool => $item['team'] === $team));
+                usort($teamChanges, fn (array $a, array $b): int => $b['time'] <=> $a['time']);
+                foreach ($teamChanges as $change) {
+                    if ($change['time'] > $goal['time']) {
+                        $keeper = $change['out'];
+                    }
+                }
+
+                return $keeper === $id;
+            });
+            $conceded += count($goals);
+            $blunders += count(array_filter($goals, fn (array $goal): bool => $goal['blunder'] ?? false));
+            $cleanSheets += (int) ($goals === []);
+        }
+
+        return ['goalkeeperGames' => $games, 'goalsConceded' => $conceded, 'cleanSheets' => $cleanSheets, 'blunders' => $blunders, 'concededAverage' => $games > 0 ? $conceded / $games : 0];
     }
 
     private function prioritize(array $pool, array $games): array

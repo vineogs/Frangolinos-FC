@@ -131,7 +131,7 @@ test('daily statistics count both substituted players preserve goals and use the
     const stats = dailyStatistics(state,day);
     assert.equal(stats.matches,1);
     assert.equal(stats.goals,2);
-    assert.deepEqual(stats.players.find((player)=>player.id==='one'),{id:'one',name:'Um',games:1,wins:1,goals:1,assists:0,departed:true});
+    assert.deepEqual(stats.players.find((player)=>player.id==='one'),{id:'one',name:'Um',games:1,wins:1,goals:1,assists:0,departed:true,goalkeeperGames:0,goalsConceded:0,cleanSheets:0,blunders:0,concededAverage:0});
     assert.equal(stats.players.find((player)=>player.id==='two').games,1);
     assert.equal(stats.scorers.length,2);
 });
@@ -485,7 +485,8 @@ test('central totals stay in the active day while general statistics include his
     assert.equal(app.element('stat-goals').textContent, 1);
     assert.equal(app.element('stat-leader').textContent, 'Jogador 2');
     assert.match(app.element('general-statistics').innerHTML, /Gols marcados<\/span><strong>2/);
-    assert.match(app.element('general-statistics').innerHTML, /Jogador 1, Jogador 2/);
+    assert.match(app.element('statistics-goals').innerHTML, /Jogador 1/);
+    assert.match(app.element('statistics-goals').innerHTML, /Jogador 2/);
     assert.match(app.element('statistics-games').innerHTML, /Jogador 3<\/span><strong>1/);
     assert.match(app.element('statistics-assists').innerHTML, /Jogador 2/);
     await app.trigger({tab:'statistics'});
@@ -692,4 +693,79 @@ test('skipping or pressing Escape dismisses the guide and More closes after navi
     await app.click('open-guide');
     app.element('guide-dialog').handlers.cancel({preventDefault(){}});
     assert.equal(app.element('guide-dialog').open, false);
+});
+
+
+test('goalkeeper statistics count clean sheets and goals against the keeper at the time of the goal', () => {
+    const state = {players:[{id:'blue',name:'Azul'},{id:'red',name:'Vermelho'},{id:'replacement',name:'Reserva'}],matches:[
+        {dayId:'day',teams:{a:['blue'],b:['red','replacement']},goalkeepers:{a:'blue',b:'replacement'},keeperChanges:[{out:'red',in:'replacement',team:'b',time:50}],goals:[{team:'a',player:'blue',time:20,goalkeeper:'red',blunder:true},{team:'a',player:'blue',time:60,goalkeeper:'replacement'}]},
+        {dayId:'day',teams:{a:['blue'],b:['red']},goalkeepers:{a:'blue',b:'red'},goals:[]}
+    ]};
+    const stats = dailyStatistics(state,{id:'day',attendees:[]});
+    const blue = stats.players.find(player => player.id === 'blue');
+    const red = stats.players.find(player => player.id === 'red');
+    const replacement = stats.players.find(player => player.id === 'replacement');
+    assert.equal(blue.cleanSheets,2);
+    assert.equal(blue.goalsConceded,0);
+    assert.equal(red.goalkeeperGames,2);
+    assert.equal(red.goalsConceded,1);
+    assert.equal(red.blunders,1);
+    assert.equal(red.concededAverage,0.5);
+    assert.equal(red.cleanSheets,1);
+    assert.equal(replacement.goalsConceded,1);
+    state.matches[0].goals.pop();
+    assert.equal(dailyStatistics(state,{id:'day',attendees:[]}).players.find(player => player.id === 'replacement').goalsConceded,0);
+});
+
+test('registering a blunder automatically identifies the opposing goalkeeper', async () => {
+    const app = await harness();
+    await app.click('new-match'); await app.submit('setup-form'); await app.click('toggle-clock');
+    const keeper = vm.runInContext('state.current.goalkeepers.b',app.context);
+    const scorer = vm.runInContext('state.current.teams.a[0]',app.context);
+    await app.click('add-goal'); await app.trigger({goalTeam:'a'}); await app.trigger({goalScorer:scorer});
+    app.element('goal-blunder').checked = true;
+    await app.submit('goal-form');
+    assert.equal(vm.runInContext('state.current.goals[0].goalkeeper',app.context),keeper);
+    assert.equal(vm.runInContext('state.current.goals[0].blunder',app.context),true);
+    assert.match(app.element('events').innerHTML,/Frango de/);
+});
+
+test('goalkeeper cards and rankings include zero goals and order total goals in both directions', async () => {
+    const app = await harness();
+    vm.runInContext(`
+        const keeperMatch = {id:'keeper-match',teams:{a:[state.players[0].id],b:[state.players[1].id]},goalkeepers:{a:state.players[0].id,b:state.players[1].id},goals:[{team:'a',player:state.players[0].id,goalkeeper:state.players[1].id,blunder:true}],elapsed:600,duration:10,date:'2026-10-01'};
+        state.matches = [keeperMatch]; state.current = null; render();
+    `,app.context);
+    const least = app.element('statistics-conceded-least').innerHTML;
+    const most = app.element('statistics-conceded-most').innerHTML;
+    assert.ok(least.indexOf('Jogador 1') < least.indexOf('Jogador 2'));
+    assert.ok(most.indexOf('Jogador 2') < most.indexOf('Jogador 1'));
+    assert.match(least,/Jogador 1.*?<strong>0<\/strong>/);
+    assert.match(most,/Jogador 2.*?<strong>1<\/strong>/);
+    assert.doesNotMatch(least,/Jogador 3/);
+    assert.doesNotMatch(app.element('general-statistics').innerHTML,/Menos gols sofridos|Mais partidas sem sofrer gols|Mais frangos/);
+    assert.match(app.element('statistics-clean-sheets').innerHTML,/Jogador 1/);
+    assert.match(app.element('statistics-blunders').innerHTML,/Jogador 2/);
+    vm.runInContext('profilePlayerId = state.players[1].id; render();',app.context);
+    assert.match(app.element('profile-goalkeeper-stats').innerHTML,/<article class="stat"><span>Gols sofridos<\/span><strong>1<\/strong>/);
+});
+
+test('all statistics rankings show at most ten players and ranking cards stay in tables', async () => {
+    const app = await harness();
+    vm.runInContext(`
+        state.current = null;
+        state.matches = state.players.flatMap((player,index) => {
+            const teammate = state.players[(index+1)%state.players.length].id;
+            const opponent = state.players[(index+2)%state.players.length].id;
+            const match = {id:'limit-'+index,teams:{a:[player.id,teammate],b:[opponent]},goalkeepers:{a:player.id,b:opponent},goals:[{team:'a',player:player.id,assist:teammate,goalkeeper:opponent},{team:'b',player:opponent,goalkeeper:player.id,blunder:true}],elapsed:600,duration:15,date:'2026-10-01'};
+            return [match,{...match,id:'clean-'+index,goals:[]}];
+        });
+        render();
+    `,app.context);
+    for (const metric of ['goals','assists','games','conceded-least','conceded-most','clean-sheets','blunders']) {
+        assert.equal((app.element('statistics-'+metric).innerHTML.match(/class="general-ranking-row"/g) ?? []).length,10,metric);
+    }
+    assert.equal((app.element('ranking-list').innerHTML.match(/class="ranking-row"/g) ?? []).length,10);
+    assert.equal((app.element('general-statistics').innerHTML.match(/class="stat"/g) ?? []).length,6);
+    assert.doesNotMatch(app.element('general-statistics').innerHTML,/Mais |Menos |Artilharia/);
 });
